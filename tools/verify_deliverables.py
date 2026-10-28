@@ -1,9 +1,7 @@
-"""Check artifact integrity, internal links and essential readable contrast."""
+"""Check document integrity, internal links and essential readable contrast."""
 from pathlib import Path
 import json
 import re
-import xml.etree.ElementTree as ET
-from PIL import Image
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -17,12 +15,16 @@ def luminance(value):
 def main():
     docs=['货物追踪软件方案.md','货物追踪软件_UI设计方案.md','货物追踪软件_技术审阅.md','架构与UI修订计划.md']
     link_count=0
+    local_evidence_references=[]
     for name in docs:
         content=(ROOT/name).read_text(encoding='utf-8-sig')
         assert '\ufffd' not in content and len(content)>100,name
         assert content.count('```')%2==0,name
         for target in re.findall(r'\]\(([^)]+)\)',content):
             if target.startswith(('http:','https:','C:/')):
+                continue
+            if target.startswith(('./release/','./output/','./artifacts/','./revisions/')):
+                local_evidence_references.append(dict(document=name,target=target))
                 continue
             assert (ROOT/target).exists(),(name,target)
             link_count+=1
@@ -40,16 +42,9 @@ def main():
         ratio=(values[1]+0.05)/(values[0]+0.05)
         assert ratio>=4.5,(label,ratio)
         contrast[label]=round(ratio,2)
-    images=[]
-    for stem,size in [('货物追踪软件_UI主界面示意',(1366,768)),('货物追踪软件_UI宽屏详情示意',(1920,1080)),('货物追踪软件_UI空航程示意',(1366,768))]:
-        svg=ET.parse(ROOT/(stem+'.svg')).getroot()
-        assert svg.attrib['viewBox']==f'0 0 {size[0]} {size[1]}'
-        with Image.open(ROOT/(stem+'.png')) as im:
-            assert im.size==size
-            im.verify()
-        images.append(dict(file=stem+'.png',size=size,bytes=(ROOT/(stem+'.png')).stat().st_size))
-    report=dict(date='2026-09-30',documents=docs,valid_local_links=link_count,contrast_ratios=contrast,images=images,
-                note='Static artifact checks only, not runtime or full accessibility verification.')
+    report=dict(documents=docs,valid_local_links=link_count,contrast_ratios=contrast,
+                unverified_local_evidence_references=local_evidence_references,
+                note='Document/link and palette checks only. Historical UI illustrations are no longer shipped; runtime and full accessibility are not verified here.')
     (ROOT/'tools'/'deliverable_validation.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False,indent=2))
 

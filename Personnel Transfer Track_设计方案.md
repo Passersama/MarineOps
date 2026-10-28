@@ -380,7 +380,7 @@ On Shore 即 xx port，按同一个港口地点管理。保留原 SHORE 地点 I
 
 人员台账与草稿使用模型表格、代理筛选、200 ms 输入防抖、按需编辑器和 UUID 选择保持。PlanViewState 集中记录版本、工作草稿、来源代次、编辑、问题、保存和导出状态；业务校验继续位于服务层。显式语义颜色统一 QSS、QPalette 与状态绘制。
 
-当前主界面实测图：[Cargo](./CargoTrack-UI-runtime.png)；[靠船编辑](./output/frontend-update-20261007/scale-1/1366x768-11pt-light-inline.png)。可编辑实现为 src/cargo_track/ui.py、personnel_ui.py、personnel_models.py 与 theme_tokens.py，旧 SVG 未当作新版运行证据。
+历史 Cargo 运行图已移除；[靠船编辑历史记录](./output/frontend-update-20261007/scale-1/1366x768-11pt-light-inline.png)。可编辑实现为 src/cargo_track/ui.py、personnel_ui.py、personnel_models.py 与 theme_tokens.py，旧 SVG 未当作新版运行证据。
 
 发行文件为 release/CargoTrack-Setup-1.1.6.exe 和 release/CargoTrack-1.1.6-Windows-x64.zip；完整证据为 release/release_validation-1.1.6.json。115 项测试、真实键盘及窗口、安装／便携／1.1.5 升级验证通过。合成缩放结果不等于物理 DPI、多显示器或讲述器语音认证。
 

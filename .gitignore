@@ -10,6 +10,9 @@ venv/
 .ruff_cache/
 
 # Generated packages, native build output and local validation data
+/CargoTrack-UI-runtime.png
+/货物追踪软件_UI*示意.png
+/货物追踪软件_UI*示意.svg
 /build/
 /dist/
 /release/

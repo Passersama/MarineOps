@@ -28,7 +28,7 @@ The 1.2.1 legacy-roster hotfix normalizes missing or blank passenger leg numbers
 
 Cargo Track is a single-user Windows desktop ledger for cargo hand-offs between vessels and shore. It keeps each physical cargo identity stable across transfer legs, records the latest confirmed location, and preserves corrections and voids in an audit history.
 
-The Python source, design documents, static UI figures, service tests, and native Qt runtime preview are available in this workspace. Windows 64-bit installer and portable ZIP are available in `release/`. Run release/MarineOps-Setup-1.2.6.exe directly. Its payload is embedded; installation is per-user and does not require administrator access.
+The Python source, design documents and service tests are available in this repository. Windows 64-bit installer and portable ZIP are available in `release/`. Run release/MarineOps-Setup-1.2.6.exe directly. Its payload is embedded; installation is per-user and does not require administrator access.
 
 1.2.1 builds on 1.2.0 and opens the native Dashboard by default. It shows the manually selected visit, current cargo actions and saved personnel plan, with Light/Dark themes and a searchable full roster drawer. Boarding/Leaving refer to joining/leaving the stop vessel, and repeated visits retain distinct identities. Cargo ledger totals cover all non-deleted transfers because cargo records have no voyage ownership field. Personnel numbers are planned movements from the selected saved version; changed sources clear the old numbers. Use `--cargo` or `--personnel` for direct startup. See `output/dashboard-release-20261012/软件审核与发布说明.md` for scope and evidence.
 
@@ -76,14 +76,13 @@ python tools/verify_crew_final_runtime.py --plan-load-regression
 python tools/verify_audit_fixes_runtime.py
 ```
 
-The service tests use temporary on-disk SQLite files. The UI smoke check starts the native Qt window offscreen, checks the worker and a real transfer action, and saves a preview image. Static design validation and detailed scope notes are recorded in `tools/` and the two Chinese design documents.
+The service tests use temporary on-disk SQLite files. The UI smoke check starts the native Qt window offscreen, checks the worker and a real transfer action, and saves a preview image. Document and contrast validation and detailed scope notes are recorded in `tools/` and the two Chinese design documents.
 
 ## Project documents
 
 - [Software and architecture plan](./货物追踪软件方案.md)
 - [UI design plan](./货物追踪软件_UI设计方案.md)
 - [Technical review and validation](./货物追踪软件_技术审阅.md)
-- [Runtime UI preview](./CargoTrack-UI-runtime.png)
 
 ## 1.0.1 validation and display repair
 
