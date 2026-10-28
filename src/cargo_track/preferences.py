@@ -20,6 +20,6 @@ def time_zone_choices(current="Asia/Riyadh"):
     except (ImportError,OSError):pass
     if not rows:rows=[(0,"(UTC) Coordinated Universal Time","UTC")]
     rows.sort(key=lambda row:(row[0],row[1]))
-    choices=[(label,zone) for _,label,zone in rows]
+    choices=[(zone+'  |  '+label,zone) for _,label,zone in rows]
     if current not in {zone for _,zone in choices}:choices.append((current,current))
     return choices

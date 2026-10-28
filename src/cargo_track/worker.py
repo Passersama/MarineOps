@@ -55,6 +55,8 @@ class DatabaseWorker(QObject):
                 self.result.emit(request_id,{"kind":"voyage_history","data":self.service.voyage_history()})
             elif operation=="_cargo_choices":
                 self.result.emit(request_id,{"kind":"cargo_choices","data":self.service.cargo_choices()})
+            elif operation=="_text_case_preview":
+                self.result.emit(request_id,{"kind":"text_case_preview","data":self.service.text_case_preview()})
             elif operation=="_backup_preview":
                 self.result.emit(request_id,{"kind":"backup_preview","data":self.service.inspect_backup(payload["path"])})
             elif operation=="_backup":
@@ -75,10 +77,10 @@ class DatabaseWorker(QObject):
                     self.result.emit(request_id,{"kind":"relocated","data":{"path":str(self.service.path)}})
                 finally:self.maintenance.emit(self.service.connection is None)
             elif operation=="_export":
-                data=self.service.export_to(payload["path"],payload["view"],payload.get("filters",{}),payload["format"],payload.get("include_completed",False))
+                data=self.service.export_to(payload["path"],payload["view"],payload.get("filters",{}),payload["format"],payload.get("include_completed",False),order_column=payload.get("order_column",0),descending=payload.get("descending",False))
                 self.result.emit(request_id,{"kind":"export","data":data})
             elif operation=="_health":
-                self.result.emit(request_id,{"kind":"health","data":{"integrity":"ok","foreign_keys":"ok","epoch":self.service.dataset_epoch}})
+                self.result.emit(request_id,{"kind":"health","data":self.service.health_report()})
             else:raise AppError("UNKNOWN_QUERY",f"Unknown application request: {operation}")
         except AppError as error:
             self.request_failed.emit(request_id,{"code":error.code,"message":error.message,"details":error.details})

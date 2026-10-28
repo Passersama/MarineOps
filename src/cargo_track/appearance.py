@@ -2,10 +2,12 @@
 
 from pathlib import Path
 import sys
-import re
 
-from PySide6.QtCore import Qt,QSettings
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPalette
+from .theme_tokens import colors, render_style, palette_colors
+from .brand import LOGO_FILE, ICON_FILE
+
+from PySide6.QtCore import Qt,QSettings,QLocale
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPalette, QPixmap
 
 
 def asset_path(name):
@@ -13,60 +15,85 @@ def asset_path(name):
     return root / "assets" / "branding" / name
 
 
-APP_STYLE = """
-QMainWindow, QDialog { background: #F5F5F7; }
-QWidget { color: #24262B; font-family: "Inter", "Segoe UI", "Microsoft YaHei UI"; font-size: __FONT_SIZE__pt; }
-QFrame#surface { background: #FFFFFF; border: 1px solid #E5E5EA; border-radius: 12px; }
-QLabel#sectionTitle { color: #666970; font-size: __FONT_SIZE__pt; font-weight: 600; }
+def brand_pixmap(width, height):
+    """Render the transparent approved ribbon without cropping or a theme tile."""
+    pixmap = QPixmap(str(asset_path(LOGO_FILE))).scaled(width * 3, height * 3,
+        Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    pixmap.setDevicePixelRatio(3)
+    return pixmap
+
+
+STYLE_TEMPLATE = """
+QMainWindow, QDialog { background: @window@; }
+QWidget { color: @text@; font-family: "Inter", "Segoe UI", "Microsoft YaHei UI"; font-size: __FONT_SIZE__pt; }
+QFrame#surface { background: @surface@; border: 1px solid @divider@; border-radius: 12px; }
+QLabel#sectionTitle { color: @muted@; font-size: __FONT_SIZE__pt; font-weight: 600; }
 QLabel#stopName { padding-left: 8px; }
-QPushButton, QToolButton { background: #FFFFFF; border: 1px solid #DCDDE2; border-radius: 7px; padding: 5px 12px; min-height: 22px; }
-QPushButton:hover, QToolButton:hover { background: #F0F3F8; border-color: #C2C9D5; }
-QPushButton:pressed, QToolButton:pressed { background: #E7EDF5; }
-QPushButton:focus, QToolButton:focus { border-color: #007AFF; }
-QPushButton:disabled, QToolButton:disabled { color: #8D9098; background: #F5F5F7; border-color: #E5E5EA; }
-QToolButton:checked { background: #EAF3FF; color: #0066CC; border-color: #C9DFFF; }
+QLabel#workbenchTitle { font-size: 14pt; font-weight: 600; }
+QFrame#routeSidebar { border: 0; border-right: 1px solid @divider@; }
+QFrame#routeSidebar QPushButton, QFrame#routeSidebar QToolButton { padding: 5px 6px; font-size: 10pt; }
+QListWidget#stopList { border: 0; border-radius: 0; background: @window@; }
+QListWidget#stopList::item { border-bottom: 1px solid @divider@; padding: 4px 6px; }
+QTabWidget#personnelTabs::pane, QTabWidget#planViews::pane { border: 0; background: @window@; }
+QTabWidget#personnelTabs > QTabBar { background: transparent; }
+QToolButton#routeStop { text-align: left; border: 0; border-bottom: 1px solid @divider@; border-radius: 0; padding: 4px 28px 4px 10px; }
+QFrame#routeSidebar QToolButton#routeStop { font-size: __FONT_SIZE__pt; }
+QToolButton#routeStop:checked { border-left: 3px solid @focus@; background: @selection@; color: @text@; }
+QPushButton#countLink { border: 0; background: transparent; padding: 4px 10px; }
+QTabBar#scopeTabs { background: transparent; }
+QTabBar#scopeTabs::tab { background: @surface@; border: 1px solid @border@; margin: 0 8px 0 0; padding: 8px 14px; }
+QTabBar#scopeTabs::tab:selected { background: @selection@; border-color: @focus@; }
+QPushButton, QToolButton { background: @surface@; border: 1px solid @border@; border-radius: 7px; padding: 5px 12px; min-height: 22px; }
+QPushButton:hover, QToolButton:hover { background: @hover@; border-color: @hover_border@; }
+QPushButton:pressed, QToolButton:pressed { background: @pressed@; }
+QPushButton:focus, QToolButton:focus { border-color: @focus@; }
+QPushButton:disabled, QToolButton:disabled { color: @disabled@; background: @window@; border-color: @divider@; }
+QToolButton:checked { background: @selection@; color: @selection_text@; border-color: @selection_border@; }
 QToolButton::menu-button { subcontrol-origin: border; subcontrol-position: right center; width: 25px; border: none; background: transparent; }
-QToolButton::menu-button:hover { background: #E8EFF8; border-top-right-radius: 7px; border-bottom-right-radius: 7px; }
+QToolButton::menu-button:hover { background: @menu_hover@; border-top-right-radius: 7px; border-bottom-right-radius: 7px; }
 QToolButton::menu-arrow { image: url(__CHEVRON__); width: 10px; height: 7px; }
 QToolButton::menu-indicator { image: none; width: 0; }
-QComboBox { background: #FFFFFF; border: 1px solid #DCDDE2; border-radius: 7px; padding: 5px 30px 5px 12px; min-height: 22px; }
-QComboBox:hover { border-color: #BBC5D3; background: #FAFBFD; }
-QComboBox:focus { border-color: #007AFF; }
-QComboBox:disabled { color: #858992; background: #F5F5F7; border-color: #E5E5EA; }
+QComboBox { background: @surface@; border: 1px solid @border@; border-radius: 7px; padding: 5px 30px 5px 12px; min-height: 22px; }
+QComboBox:hover { border-color: @field_hover_border@; background: @field_hover@; }
+QComboBox:focus { border-color: @focus@; }
+QComboBox:disabled { color: @field_disabled@; background: @window@; border-color: @divider@; }
 QComboBox::drop-down { subcontrol-origin: border; subcontrol-position: top right; width: 28px; border: none; background: transparent; }
 QComboBox::down-arrow { image: url(__CHEVRON__); width: 10px; height: 7px; }
 QComboBox::down-arrow:disabled { image: url(__CHEVRON_DISABLED__); }
-QComboBox QAbstractItemView { padding: 5px; background: #FFFFFF; border: 1px solid #DCDDE2; border-radius: 8px; outline: none; selection-background-color: #007AFF; selection-color: #FFFFFF; }
+QComboBox QAbstractItemView { padding: 5px; background: @surface@; border: 1px solid @border@; border-radius: 8px; outline: none; selection-background-color: @focus@; selection-color: @menu_selection_text@; }
 QComboBox QAbstractItemView::item { min-height: 26px; padding: 3px 8px; }
-QLineEdit, QTextEdit { background: #FFFFFF; border: 1px solid #DCDDE2; border-radius: 8px; padding: 5px 10px; min-height: 22px; selection-background-color: #D5E8FF; }
-QLineEdit:focus, QTextEdit:focus { border: 1px solid #007AFF; background: #FFFFFF; }
-QPushButton#primaryButton { color: #FFFFFF; background: #0066D6; border-color: #0066D6; font-weight: 600; }
-QPushButton#primaryButton:hover { background: #006BE0; }
-QTabBar { background: #E9EAEE; border-radius: 8px; }
-QTabBar::tab { background: transparent; color: #62656D; padding: 7px 13px; margin: 3px; border: 0; border-radius: 6px; }
-QTabBar::tab:selected { color: #24262B; background: #FFFFFF; font-weight: 600; }
-QTabBar::tab:hover:!selected { background: #DFE2E8; }
-QAbstractItemView { background: #FFFFFF; alternate-background-color: #FAFAFC; color: #24262B; border: 1px solid #E5E5EA; border-radius: 8px; selection-background-color: #EAF3FF; selection-color: #24262B; }
-QAbstractItemView::item:selected { background: #EAF3FF; color: #24262B; }
-QAbstractItemView::item:focus { border: 1px solid #007AFF; }
-QScrollArea, QScrollArea > QWidget > QWidget { background: #FFFFFF; border: 0; }
-QHeaderView { color: #6D7078; background: #FAFAFC; }
-QHeaderView::section { color: #6D7078; background: #FAFAFC; border: 0; border-bottom: 1px solid #E5E5EA; padding: 7px 8px; font-weight: 600; }
-QTableCornerButton::section { background: #FAFAFC; border: 0; }
-QMenu { background: #FFFFFF; color: #24262B; border: 1px solid #DCDDE2; border-radius: 8px; padding: 5px; }
+QLineEdit, QTextEdit { background: @surface@; border: 1px solid @border@; border-radius: 8px; padding: 5px 10px; min-height: 22px; selection-background-color: @text_selection@; }
+QLineEdit:focus, QTextEdit:focus { border: 1px solid @focus@; background: @surface@; }
+QPushButton#primaryButton { color: @primary_text@; background: @primary@; border-color: @primary@; font-weight: 600; }
+QPushButton#primaryButton:hover { background: @primary_hover@; }
+QPushButton#primaryButton:disabled { color: @disabled@; background: @window@; border-color: @divider@; }
+QPushButton#workspaceTab:checked { background: @primary@; color: @primary_text@; border: 1px solid @selection_border@; font-weight: 600; }
+QTabBar { background: @tab_track@; border-radius: 8px; }
+QTabBar::tab { background: transparent; color: @tab_text@; padding: 7px 13px; margin: 3px; border: 0; border-radius: 6px; }
+QTabBar::tab:selected { color: @text@; background: @surface@; font-weight: 600; }
+QTabBar::tab:hover:!selected { background: @tab_hover@; }
+QAbstractItemView { background: @surface@; alternate-background-color: @alternate@; color: @text@; border: 1px solid @divider@; border-radius: 8px; selection-background-color: @selection@; selection-color: @text@; }
+QAbstractItemView::item:selected { background: @selection@; color: @text@; }
+QAbstractItemView::item:focus { border: 1px solid @focus@; }
+QScrollArea, QScrollArea > QWidget > QWidget { background: @surface@; border: 0; }
+QHeaderView { color: @header@; background: @alternate@; }
+QHeaderView::section { color: @header@; background: @alternate@; border: 0; border-bottom: 1px solid @divider@; padding: 7px 8px; font-weight: 600; }
+QTableCornerButton::section { background: @alternate@; border: 0; }
+QMenu { background: @surface@; color: @text@; border: 1px solid @border@; border-radius: 8px; padding: 5px; }
 QMenu::item { padding: 7px 20px; border-radius: 5px; }
-QMenu::item:selected { background: #007AFF; color: #FFFFFF; }
-QMenu::item:disabled { color: #8D9098; }
-QMenu::separator { height: 1px; background: #E5E5EA; margin: 5px 8px; }
+QMenu::item:selected { background: @focus@; color: @menu_selection_text@; }
+QMenu::item:disabled { color: @disabled@; }
+QMenu::separator { height: 1px; background: @divider@; margin: 5px 8px; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
 QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
-QScrollBar::handle { background: #BFC2C9; border-radius: 3px; min-height: 24px; min-width: 24px; }
-QScrollBar::handle:hover { background: #999DA6; }
+QScrollBar::handle { background: @scrollbar@; border-radius: 3px; min-height: 24px; min-width: 24px; }
+QScrollBar::handle:hover { background: @scrollbar_hover@; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; border: none; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
-QToolTip { background: #FFFFFF; color: #24262B; border: 1px solid #DCDDE2; padding: 4px; }
-QStatusBar { color: #6D7078; background: #F5F5F7; }
+QToolTip { background: @surface@; color: @text@; border: 1px solid @border@; padding: 4px; }
+QStatusBar { color: @header@; background: @window@; }
 """
+APP_STYLE = render_style(STYLE_TEMPLATE)
 
 
 
@@ -85,40 +112,31 @@ def is_dark_mode():return QSettings().value("appearance/theme","light")=="dark"
 def themed_color(light,dark):return dark if is_dark_mode() else light
 
 def theme_style():
-    style=APP_STYLE
-    if is_dark_mode():
-        style=re.sub(r"#[0-9A-Fa-f]{6}",lambda m:DARK_COLORS.get(m.group().upper(),m.group()),style)
-        style+="\nQLabel#brand { background: #F5F5F7; border-radius: 6px; } QPushButton#primaryButton { color: #FFFFFF; } QComboBox QAbstractItemView { selection-color: #081827; } QMenu::item:selected { color: #081827; }"
+    style=render_style(STYLE_TEMPLATE,is_dark_mode())
     return style
 
+
 def configure_application(app):
+    QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
     root=Path(getattr(sys,"_MEIPASS",Path(__file__).resolve().parents[2]))
-    for file in ("Inter-Regular.ttf","Inter-SemiBold.ttf"):
-        if QFontDatabase.addApplicationFont(str(root/"assets/fonts"/file))<0:raise RuntimeError("The bundled Inter font could not be loaded.")
+    if app.property('cargoTrackFontRoot') != str(root):
+        for file in ("Inter-Regular.ttf","Inter-SemiBold.ttf"):
+            if QFontDatabase.addApplicationFont(str(root/"assets/fonts"/file))<0:raise RuntimeError("The bundled Inter font could not be loaded.")
+        app.setProperty('cargoTrackFontRoot',str(root))
     # Native Windows dark colors otherwise leak into unstyled viewports and headers.
     app.setStyle("Fusion")
     if hasattr(app.styleHints(), "setColorScheme"):
         app.styleHints().setColorScheme(Qt.ColorScheme.Dark if is_dark_mode() else Qt.ColorScheme.Light)
     palette = QPalette()
-    colors = {
-        "Window": "#F4F6FA", "WindowText": "#17243A", "Base": "#FFFFFF",
-        "AlternateBase": "#F8FAFC", "Text": "#17243A", "Button": "#FFFFFF",
-        "ButtonText": "#17243A", "ToolTipBase": "#FFFFFF", "ToolTipText": "#17243A",
-        "Highlight": "#E8F0FA", "HighlightedText": "#17243A", "BrightText": "#FFFFFF",
-        "Light": "#FFFFFF", "Midlight": "#F4F6FA", "Dark": "#C9D3E0",
-        "Mid": "#DCE3ED", "Shadow": "#788496", "Link": "#174B87",
-        "LinkVisited": "#6F4CC3", "PlaceholderText": "#65738A",
-    }
-    if is_dark_mode():
-        colors.update(Window="#191B20",WindowText="#E6E8ED",Base="#25272E",AlternateBase="#202329",Text="#E6E8ED",Button="#25272E",ButtonText="#E6E8ED",ToolTipBase="#25272E",ToolTipText="#E6E8ED",Highlight="#183D61",HighlightedText="#E6E8ED",Light="#414650",Midlight="#30333B",Dark="#17191D",Mid="#373A43",Shadow="#080A0D",Link="#A6D0FF",LinkVisited="#C5ACFF",PlaceholderText="#A4ABB7")
-    for role, color in colors.items():
+    palette_values = palette_colors(is_dark_mode())
+    for role, color in palette_values.items():
         palette.setColor(getattr(QPalette.ColorRole, role), QColor(color))
     for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
-        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor("#9299A6" if is_dark_mode() else "#65738A"))
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(colors(is_dark_mode())["disabled"]))
     app.setPalette(palette)
     app.setFont(QFont(application_font_family(), application_font_size()))
     app.setStyleSheet(theme_style().replace("__FONT_SIZE__",str(application_font_size())).replace('"Inter"','"'+application_font_family()+'"').replace("__CHEVRON__", asset_path("chevron-dark.svg" if is_dark_mode() else "chevron.svg").as_posix()).replace("__CHEVRON_DISABLED__", asset_path("chevron-disabled-dark.svg" if is_dark_mode() else "chevron-disabled.svg").as_posix()))
-    app.setWindowIcon(QIcon(str(asset_path("cargo-track.ico"))))
+    app.setWindowIcon(QIcon(str(asset_path(ICON_FILE))))
 
 
 def fit_to_screen(widget):

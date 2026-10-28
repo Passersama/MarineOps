@@ -83,7 +83,7 @@ def run_child(scale,theme="light",font_size=11):
                 assert point.x()+widget.width() <= window.width(), (widget.text() if hasattr(widget,"text") else widget.accessibleName(),"horizontal clipping")
                 assert point.y()+widget.height() <= window.height(), (widget.accessibleName(),"vertical clipping")
             assert window.table.height() >= 65, ("ledger too short",window.table.height())
-            for name, widget in (("route",window.route_scroll.viewport()),("header",window.table.horizontalHeader())):
+            for name, widget in (("route",window.route_content),("header",window.table.horizontalHeader())):
                 image = widget.grab().toImage()
                 color = image.pixelColor(max(0,image.width()-4),3)
                 assert (color.lightness() >= 200 if theme=="light" else color.lightness()<=90), (name,"dark background",color.name())

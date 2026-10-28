@@ -14,6 +14,13 @@ venv/
 /dist/
 /release/
 /artifacts/
+/output/
+/.impeccable/
+/assets/branding/marineops-delivery-v1/
+/assets/branding/marineops-free-directions-20261028/
+/assets/branding/marineops-selected/
+/assets/branding/marineops-logo-*
+/assets/branding/maritime-operations-logo-*
 /revisions/
 /.tmp-build/
 /src/deployment/

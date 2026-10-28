@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
+import json
+from pathlib import Path
+from uuid import uuid4
+
+from .domain import normalized_name
 
 SCHEMA_VERSION = 1
 
@@ -165,11 +170,15 @@ def connect(path: str) -> sqlite3.Connection:
 
 def initialize(conn: sqlite3.Connection) -> None:
     exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'").fetchone()
+    if not exists and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchone():
+        raise RuntimeError('Choose a MarineOps ledger. This database belongs to another module.')
     if exists:
         version_row = conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()
         if version_row and version_row[0] > SCHEMA_VERSION:
             raise RuntimeError(f"Database schema {version_row[0]} is newer than this application ({SCHEMA_VERSION}).")
     conn.executescript(DDL)
+    conn.execute("CREATE TABLE IF NOT EXISTS ledger_meta(id INTEGER PRIMARY KEY CHECK(id=1),identity TEXT NOT NULL)")
+    conn.execute("INSERT OR IGNORE INTO ledger_meta VALUES(1,?)",(str(uuid4()),))
     version = conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()[0]
     if version > SCHEMA_VERSION:
         raise RuntimeError(f"Database schema {version} is newer than this application ({SCHEMA_VERSION}).")
@@ -178,18 +187,55 @@ def initialize(conn: sqlite3.Connection) -> None:
     now = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
     conn.execute(
         f"INSERT INTO locations(kind,name,name_key,active,created_utc,updated_utc) "
-        f"SELECT 'SHORE','On Shore','on shore',1,{now},{now} "
+        f"SELECT 'SHORE','xx port','xx port',1,{now},{now} "
         f"WHERE NOT EXISTS(SELECT 1 FROM locations WHERE kind='SHORE')"
     )
     conn.execute("INSERT OR IGNORE INTO settings(key,value,updated_utc) VALUES('business_timezone','Asia/Riyadh',strftime('%Y-%m-%dT%H:%M:%SZ','now'))")
     conn.execute("INSERT OR IGNORE INTO settings(key,value,updated_utc) VALUES('transfer_vessel_name','',strftime('%Y-%m-%dT%H:%M:%SZ','now'))")
+    # Port is the existing SHORE identity; older legs and saved plans keep their snapshots.
+    shore = conn.execute("SELECT id,name FROM locations WHERE kind='SHORE'").fetchone()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        default_port = "xx port" if normalized_name(shore["name"]) == "on shore" else shore["name"]
+        conn.execute("INSERT OR IGNORE INTO settings(key,value,updated_utc) VALUES('port_name',?,strftime('%Y-%m-%dT%H:%M:%SZ','now'))", (default_port,))
+        port = conn.execute("SELECT value FROM settings WHERE key='port_name'").fetchone()[0]
+        if shore["name"] != port:
+            conn.execute("UPDATE locations SET name=?,name_key=?,updated_utc=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?", (port, normalized_name(port), shore["id"]))
+            conn.execute("UPDATE app_state SET data_revision=data_revision+1 WHERE id=1")
+            conn.execute("""INSERT INTO audit_events(entity_type,entity_id,command_id,event_type,occurred_utc,timezone_name,reason,data_json)
+              VALUES('location',?,'shared-port-migration','PORT_NAME_MIGRATED',strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+              (SELECT value FROM settings WHERE key='business_timezone'),'Unify legacy shore with the configured port',?)""",
+              (shore["id"], json.dumps({"before":{"name":shore["name"]},"after":{"name":port}},ensure_ascii=False)))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def check_integrity(path: str) -> list[str]:
-    conn = connect(path)
+    conn = sqlite3.connect(Path(path).resolve().as_uri()+"?mode=ro",uri=True)
+    conn.row_factory = sqlite3.Row
     try:
         failures = [str(row[0]) for row in conn.execute("PRAGMA integrity_check") if row[0] != "ok"]
         failures.extend(f"foreign key: {tuple(row)}" for row in conn.execute("PRAGMA foreign_key_check"))
+        reference=sqlite3.connect(':memory:')
+        try:
+            reference.executescript(DDL)
+            allowed_executable = set(reference.execute(
+                "SELECT type,name FROM sqlite_master WHERE type IN ('trigger','view')"))
+            for schema_object in conn.execute(
+                    "SELECT type,name FROM sqlite_master WHERE type IN ('trigger','view')"):
+                if tuple(schema_object) not in allowed_executable:
+                    failures.append('Cargo backup contains an unsupported trigger or view')
+            for kind,name,sql in reference.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"):
+                actual=conn.execute('SELECT sql FROM sqlite_master WHERE type=? AND name=?',(kind,name)).fetchone()
+                normalize=lambda value:''.join(value.casefold().split()).replace('ifnotexists','')
+                if actual is None or (sql and normalize(actual[0] or '')!=normalize(sql)):
+                    failures.append(f'Missing or invalid Cargo schema object: {name}')
+                elif kind=='table' and [tuple(r) for r in conn.execute(f'PRAGMA table_info("{name}")')] != list(reference.execute(f'PRAGMA table_info("{name}")')):
+                    failures.append(f'Invalid Cargo table columns: {name}')
+        finally:reference.close()
+        if failures:return failures
         version = conn.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()
         if version is None or version[0] != SCHEMA_VERSION:
             failures.append("Unsupported schema version")

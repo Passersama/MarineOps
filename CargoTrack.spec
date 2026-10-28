@@ -6,7 +6,7 @@ binaries = []
 hiddenimports = []
 tmp_ret = collect_all("tzdata")
 datas += tmp_ret[0]
-datas += [("assets/branding/cargo-track-lockup.png", "assets/branding"), ("assets/branding/cargo-track.ico", "assets/branding")]
+datas += [("assets/branding/marineops-symbol.png", "assets/branding"), ("assets/branding/marineops.ico", "assets/branding")]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
@@ -33,7 +33,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="CargoTrack",
+    name="MarineOps",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -44,7 +44,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon="assets/branding/cargo-track.ico",
+    icon="assets/branding/marineops.ico",
     version="tools/windows-version.txt",
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, upx_exclude=[], name="CargoTrack")
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, upx_exclude=[], name="MarineOps")
