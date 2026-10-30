@@ -9,6 +9,7 @@ from .personnel_cargo import read_cargo, crew_source_matches
 from .personnel_import import digest
 from .personnel_routes import leg_order
 from .plan_store import version_summaries, version_payload
+from .source_paths import source_path_key
 
 
 class DashboardDataError(ValueError):
@@ -148,16 +149,16 @@ def read_personnel_summary(path, cargo, selected_id=None, preferred_list=None, s
         names = {r['id']: r['name'] for r in db.execute('SELECT id,name FROM personnel_plans')}
         plans = version_summaries(db)
         matching = []
-        resolved_sources = {}
-        cargo_path = Path(cargo['path']).resolve()
+        source_keys = {}
+        cargo_path = source_path_key(cargo['path'])
         for plan in plans:
             if not isinstance(plan, dict):
                 raise DashboardDataError('A saved personnel plan is unreadable. Review it in Personnel.')
             source_path = plan.get('source_path')
             if plan.get('voyage_id') == cargo['voyage_id'] and source_path:
-                if source_path not in resolved_sources:
-                    resolved_sources[source_path] = Path(source_path).resolve()
-                if resolved_sources[source_path] == cargo_path:
+                if source_path not in source_keys:
+                    source_keys[source_path] = source_path_key(source_path)
+                if source_keys[source_path] == cargo_path:
                     matching.append(plan)
         result['choices'] = [{'id': p['id'], 'label': f"{p['date']} / {names.get(p.get('personnel_plan_id'), 'Crew list')} / {p.get('status', 'Draft')} v{p['version']}"}
                              for p in matching]

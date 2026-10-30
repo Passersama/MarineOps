@@ -58,10 +58,12 @@ class CrewImportMappingTests(unittest.TestCase):
         try:
             self.assertIn('Workbook Alias',dialog.alias_widgets)
             combo=dialog.alias_widgets['Workbook Alias'];combo.setCurrentIndex(combo.findData(self.f.c))
+            self.wait(lambda:dialog.preview is not None and not self.page._jobs)
             self.assertEqual(self.f.c,dialog.preview['items'][0]['data']['to_id'])
             self.assertEqual({'workbook alias':self.f.c},dialog.preview['aliases']['values'])
-            with patch('cargo_track.personnel_ui.confirm',return_value=True):dialog.commit()
-            self.wait(lambda:not self.page._write_pending)
+            with patch('cargo_track.personnel_ui.confirm',return_value=True):
+                dialog.commit()
+                self.wait(lambda:not self.page._write_pending)
             self.assertEqual([],self.errors)
             self.assertEqual(self.f.c,self.page.service.resolve_location(self.page.source,'Workbook Alias')['id'])
             person=next(r for r in self.page.service.crew_records(self.f.plan,self.page.source) if r['name']=='New Imported Crew')

@@ -60,7 +60,7 @@ class SourcePathTests(unittest.TestCase):
                  r'\\?\C:\ledger.sqlite3')
         for path in paths:
             with self.subTest(path=path), patch(
-                    'cargo_track.personnel_cargo.Path.resolve',
+                    'cargo_track.source_paths.os.lstat',
                     side_effect=AssertionError('Filesystem access must not occur')):
                 with self.assertRaisesRegex(PersonnelError, 'local Cargo database'):
                     read_cargo(path)
@@ -81,6 +81,7 @@ class ImportedLabelTests(unittest.TestCase):
             parsed['sheet'] = '<b>Worksheet</b>'
             parsed['records'][0]['vessel'] = '<b>Unmatched vessel</b>'
             dialog = ImportDialog(fixture.page, parsed)
+            fixture.wait(lambda:dialog.preview is not None and not fixture.page._jobs)
             self.assertEqual(Qt.TextFormat.PlainText, dialog.summary.textFormat())
             self.assertIn('<b>Worksheet</b>', dialog.summary.text())
             self.assertEqual(Qt.TextFormat.PlainText, dialog.missing.textFormat())

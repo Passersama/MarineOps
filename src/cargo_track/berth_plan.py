@@ -280,7 +280,8 @@ def generate_plan(snapshot, personnel, selected_cargo, plan_date, port_name, mod
     dependencies['mode']=mode
     personnel_dependencies=dependency_spec(snapshot,personnel,[])
     personnel_dependencies['mode']=mode
-    result = {"date": iso_date(plan_date), "mode": mode, "start_stop_id": start_stop_id,
+    result = {"date": iso_date(plan_date), "mode": mode, "start_stop_id": start_stop_id, "shore_id": shore,
+            'output_contract_version':1,
             "personnel_plan_id": personnel_plan_id, "voyage_id": snapshot["voyage_id"], "voyage_name": snapshot["voyage_name"],
             "port_name": port_name.strip(), "transfer_vessel": transfer_name(snapshot),
             "source_path": snapshot["source_path"], "source_hash": snapshot["source_hash"], "source_revision": snapshot["revision"],
@@ -340,6 +341,7 @@ def revise_complete(base, pending, snapshot, live_personnel):
     for field in ("source_hash", "source_revision", "personnel_hash", "issues", "warnings", "assignments", "followups", "excluded", "port_name", "transfer_vessel", "source_dependencies", "dependency_hash", "personnel_dependencies", "personnel_dependency_hash", "source_identity", "source_generation"):
         result[field] = copy.deepcopy(pending[field])
     result["included"] = sorted(retained | set(pending["included"]))
+    result['selected_tasks'] = sorted(retained | set(pending.get('selected_tasks',pending['included'])))
     result["personnel_versions"] = dict(pending["personnel_versions"])
     for identifier in retained:
         if identifier.startswith("Passengers:"):
@@ -389,7 +391,7 @@ def export_plan(plan, destination):
     if plan.get("status") == "Published" and plan["issues"]:
         raise PersonnelError("Published plans cannot contain unresolved issues.")
     path = Path(destination).resolve()
-    try:workspace_files.check_output(path,plan.get('source_path'),plan.get('personnel_source_path'))
+    try:workspace_files.check_output(path,source_references=(plan.get('source_path'),plan.get('personnel_source_path')))
     except ProtectedFileError as exc:raise PersonnelError(str(exc)) from exc
     if path.suffix.casefold() != ".xlsx":
         path = path.with_suffix(".xlsx")
@@ -535,7 +537,7 @@ def export_plan(plan, destination):
     temp = path.with_name(path.stem + "." + uuid4().hex + ".tmp.xlsx")
     try:
         book.save(temp)
-        try:workspace_files.check_output(path,plan.get('source_path'),plan.get('personnel_source_path'))
+        try:workspace_files.check_output(path,source_references=(plan.get('source_path'),plan.get('personnel_source_path')))
         except ProtectedFileError as exc:raise PersonnelError(str(exc)) from exc
         os.replace(temp, path)
     finally:

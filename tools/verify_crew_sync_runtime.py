@@ -8,7 +8,8 @@ import time
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src'))
-OUT=ROOT/'output/crew-sync-1.2.5'
+from cargo_track import __version__
+OUT=ROOT/f'output/crew-sync-{__version__}'
 DATA=OUT/('native-'+str(time.time_ns()))
 DATA.mkdir(parents=True)
 os.environ['CARGO_TRACK_DATA_DIR']=str(DATA)
@@ -80,7 +81,7 @@ try:
         def close_about():
             dialog=app.activeModalWidget()
             assert dialog.windowTitle()=='About MarineOps'
-            assert dialog.version.text()=='Version 1.2.5'
+            assert dialog.version.text()=='Version '+__version__
             dialog.grab().save(str(OUT/('about-'+name+'.png')))
             dialog.accept()
         QTimer.singleShot(50,close_about)
@@ -101,7 +102,7 @@ try:
     edited=page.service.bind_record({**record,'name':'Alex Updated','position':'Chief Engineer',
         'to_name':'BGP Innovator','vessel':'BGP Innovator'},page.source)
     page.run_write('edit_crew_entry',(record['id'],edited,record['version']),lambda _:page.crew_changed())
-    wait(lambda:not page._write_pending)
+    wait(lambda:not page._write_pending and not page._jobs)
     current=page.displayed_plan
     assert current['id']!=saved['id'] and not current['issues'],(current,errors)
     assert plan_assignments(current)['Passengers:'+ids[1]]=={'pick':'plan:crew-port','drop':visits[1]}
@@ -113,7 +114,7 @@ try:
     window.grab().save(str(OUT/'personnel-after.png'))
     # Persist the working route before navigating to Dashboard.
     page.save_version(True)
-    wait(lambda:not page._write_pending and not page.view_state.dirty)
+    wait(lambda:not page._write_pending and not page.view_state.dirty and not page._jobs)
     export_plan(page.saved_plan,OUT/'updated-berthing-plan.xlsx')
     assert not errors,errors
     window.show_dashboard()
@@ -149,7 +150,7 @@ try:
                 window.grab().save(str(OUT/filename));captures.append(filename)
         inspect_about(page.navigation,theme)
     # The only Cargo write in this check is the explicit current-visit switch.
-    report={'result':'PASS','platform':app.platformName(),'data_directory':str(DATA),
+    report={'result':'PASS','version':__version__,'platform':app.platformName(),'data_directory':str(DATA),
         'real_port_pickup':True,'sign_off_before_port':True,'master_edit_updates_saved_plan':True,
         'from_to_updated_without_generate':True,'native_dashboard_before':{'boarding':0,'leaving':1},
         'native_dashboard_after':{'boarding':1,'leaving':0},'historical_version_retained':saved in page.service.berth_versions(),

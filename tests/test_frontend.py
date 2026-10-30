@@ -156,6 +156,7 @@ class FrontendTests(unittest.TestCase):
         self.error_patch=patch.object(self.page,'show_error',self.errors.append);self.error_patch.start()
         self.wait(lambda:self.page.source is not None and not self.page._jobs)
         self.page.plan_combo.setCurrentIndex(self.page.plan_combo.findData(self.f.plan))
+        self.wait(lambda:not self.page._jobs and not self.page._loading_list)
 
     def tearDown(self):
         self.page._validation_timer.stop();self.page.shutdown();self.page.deleteLater();self.host.deleteLater()
@@ -165,7 +166,7 @@ class FrontendTests(unittest.TestCase):
         end=time.monotonic()+8
         while time.monotonic()<end:
             self.app.processEvents()
-            if predicate():return
+            if predicate() and not self.page._jobs and not self.page._loading_list:return
             time.sleep(.01)
         self.fail('Frontend did not complete: '+str(self.errors))
 
@@ -191,8 +192,7 @@ class FrontendTests(unittest.TestCase):
         self.assertEqual(original,self.plan)
 
     def choice(self,label):
-        def clicked(box):return next(b for b in box.buttons() if b.text().replace('&','')==label)
-        return patch.object(QMessageBox,'clickedButton',clicked)
+        return patch('cargo_track.personnel_ui.prompt',return_value=label)
 
     def test_cancel_export_does_not_create_version_or_replace_editor(self):
         editor=self.draft();before=self.page.service.berth_versions()

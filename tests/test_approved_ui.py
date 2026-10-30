@@ -39,7 +39,8 @@ class ApprovedUITests(unittest.TestCase):
         saved=copy.deepcopy(self.page.saved_plan)
         self.assertEqual('An operational stop note',saved['stops'][0]['comment'])
         self.assertNotIn('Unsaved',self.page.plan_notice.text())
-        self.page.copy_complete();self.page.stop_comment.setPlainText('Revised stop note')
+        self.page.copy_complete();self.wait(lambda:not self.page._jobs)
+        self.page.stop_comment.setPlainText('Revised stop note')
         self.assertEqual(saved,self.page.service.berth_versions()[0])
         self.assertEqual('Revised stop note',self.page.live_builder.build()['stops'][0]['comment'])
 

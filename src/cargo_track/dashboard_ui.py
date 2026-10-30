@@ -20,7 +20,6 @@ from .theme_tokens import colors, render_style
 
 
 STYLE = '''
-QWidget#dashboardPage {background:@window@;}
 QLabel#dashboardTitle {font-size:25pt;font-weight:600;}
 QLabel#dashboardStation {font-size:__SHIP__pt;font-weight:600;}
 QLabel#dashboardMetric {font-size:__METRIC__pt;font-weight:600;}
@@ -58,7 +57,8 @@ def button(text, callback, name=None):
 
 
 def surface():
-    widget = QFrame();widget.setObjectName('surface')
+    from .frosted import FrostedFrame
+    widget = FrostedFrame();widget.setObjectName('surface')
     return widget
 
 
@@ -173,15 +173,12 @@ class DashboardPage(QWidget):
         self.today=ElidedLabel();self.today.setObjectName('dashboardMuted')
         self.today.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
         self.today.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred);header.addWidget(self.today,1)
-        self.light=button('Light',lambda:self.choose_theme('light'),'dashboardTheme');self.dark=button('Dark',lambda:self.choose_theme('dark'),'dashboardTheme')
-        themes=QButtonGroup(self)
-        for value in (self.light,self.dark):value.setCheckable(True);themes.addButton(value);header.addWidget(value)
         header.addWidget(button('Settings',self.host.open_settings))
         self.navigation.layout().removeWidget(self.navigation.about_button)
         header.addWidget(self.navigation.about_button)
         self.navigation.setMinimumWidth(self.navigation.sizeHint().width());root.addLayout(header)
-        self.scroll=QScrollArea();self.scroll.setWidgetResizable(True);self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);root.addWidget(self.scroll,1)
-        self.content=QWidget();self.scroll.setWidget(self.content);body=QVBoxLayout(self.content);body.setContentsMargins(0,0,0,0);body.setSpacing(12)
+        self.scroll=QScrollArea();self.scroll.setObjectName('dashboardScroll');self.scroll.setWidgetResizable(True);self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);root.addWidget(self.scroll,1)
+        self.content=QWidget();self.content.setObjectName('dashboardContent');self.scroll.setWidget(self.content);body=QVBoxLayout(self.content);body.setContentsMargins(0,0,0,0);body.setSpacing(12)
         self.hero=surface();hero=QVBoxLayout(self.hero);hero.setContentsMargins(24,20,24,16);hero.setSpacing(15)
         title=QHBoxLayout();title.addWidget(label('Overview','dashboardTitle'));title.addSpacing(24);title.addWidget(label('Voyage','dashboardMuted'))
         self.voyage=label('Loading…',wrap=True);title.addWidget(self.voyage,1);title.addWidget(button('Voyages',self._open_voyages));title.addWidget(button('Refresh',self.refresh_from_source));hero.addLayout(title)
@@ -193,7 +190,7 @@ class DashboardPage(QWidget):
             group=QVBoxLayout();metric.setAlignment(Qt.AlignmentFlag.AlignCenter);group.addWidget(metric);caption=label(text,'dashboardMuted');caption.setAlignment(Qt.AlignmentFlag.AlignCenter);group.addWidget(caption);metrics.addLayout(group)
         actions.addLayout(metrics);self.open_stop=button('Open current stop',self.open_current,'primaryButton');actions.addWidget(self.open_stop);actions.addStretch();self.brief.addLayout(actions,3)
         summary=QVBoxLayout();summary.addWidget(label('Cargo ledger summary','dashboardHeading'));self.total=label('','dashboardMuted',True);summary.addWidget(self.total)
-        dist=QHBoxLayout();self.donut=Donut();dist.addWidget(self.donut);numbers=QVBoxLayout();self.status_totals={}
+        dist=QHBoxLayout();self.donut=Donut();dist.addWidget(self.donut);self.donut.hide();numbers=QVBoxLayout();self.status_totals={}
         for status in ('Waiting','On Board','Done'):
             count=label('0');count.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter);row=QHBoxLayout();row.addWidget(label(status));row.addWidget(count);numbers.addLayout(row);self.status_totals[status]=count
         dist.addLayout(numbers,1);summary.addLayout(dist);summary.addStretch()
@@ -201,14 +198,16 @@ class DashboardPage(QWidget):
         personnel_summary=QVBoxLayout();personnel_summary.addWidget(label('Personnel plan progress','dashboardHeading'))
         self.personnel_total=label('Select a current visit and saved plan.','dashboardMuted',True);personnel_summary.addWidget(self.personnel_total)
         personnel_dist=QHBoxLayout();self.personnel_donut=Donut(segments=(('Completed','#32A44D'),('Pending','#FFC356')),caption='person-times')
-        self.personnel_donut.setAccessibleName('Current voyage personnel plan progress');personnel_dist.addWidget(self.personnel_donut)
+        self.personnel_donut.setAccessibleName('Current voyage personnel plan progress');personnel_dist.addWidget(self.personnel_donut);self.personnel_donut.hide()
         personnel_numbers=QVBoxLayout();self.personnel_status_totals={}
         for status in ('Completed','Pending'):
             count=label('-');count.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter);row=QHBoxLayout();row.addWidget(label(status));row.addWidget(count);personnel_numbers.addLayout(row);self.personnel_status_totals[status]=count
         personnel_dist.addLayout(personnel_numbers,1);personnel_summary.addLayout(personnel_dist)
         self.personnel_progress_note=label('Completed = drop visit before current visit.','dashboardMuted',True);personnel_summary.addWidget(self.personnel_progress_note)
-        summaries.addLayout(personnel_summary,1);hero.addWidget(self.briefing);hero.addLayout(summaries)
-        self.route_content=QWidget();self.route_items=RouteLayout(self.route_content);hero.addWidget(self.route_content)
+        summaries.addLayout(personnel_summary,1);hero.addWidget(self.briefing)
+        self.summary_details=QWidget();self.summary_details.setLayout(summaries);self.summary_details.hide()
+        self.summary_line=label('', 'dashboardMuted', True);hero.addWidget(self.summary_line)
+        self.route_content=QWidget();self.route_items=RouteLayout(self.route_content);hero.insertWidget(1,self.route_content)
         self.route_empty=label('Select or create a voyage in Cargo to start.','dashboardMuted',True);hero.addWidget(self.route_empty);body.addWidget(self.hero)
         self.work=QWidget();self.work_layout=QHBoxLayout(self.work);self.work_layout.setContentsMargins(0,0,0,0);self.work_layout.setSpacing(12)
         self.cargo_panel=surface();c=QVBoxLayout(self.cargo_panel);c.setContentsMargins(18,16,18,16)
@@ -227,7 +226,7 @@ class DashboardPage(QWidget):
         counts=QHBoxLayout();self.boarding=label('-','dashboardCrewMetric');self.leaving=label('-','dashboardCrewMetric')
         for metric,text in ((self.boarding,'Boarding'),(self.leaving,'Leaving')):
             column=QVBoxLayout();metric.setAlignment(Qt.AlignmentFlag.AlignCenter);column.addWidget(metric);caption=label(text);caption.setAlignment(Qt.AlignmentFlag.AlignCenter);column.addWidget(caption);counts.addLayout(column)
-        p.addLayout(counts)
+        self.brief.addLayout(counts,2)
         self.crew_model=TableModel([('Name','name'),('Position','position'),('Movement','movement')],self)
         self.crew_proxy=CrewProxy(self);self.crew_proxy.setSourceModel(self.crew_model);self.crew_table=table(self.crew_proxy)
         crew_header=self.crew_table.horizontalHeader();crew_header.setStretchLastSection(False)
@@ -255,7 +254,7 @@ class DashboardPage(QWidget):
         d.addWidget(button('Open Personnel',lambda:(self.close_drawer(),self.host.open_personnel())))
     def apply_theme(self):
         size=application_font_size();self.setStyleSheet(render_style(STYLE,is_dark_mode()).replace('__SHIP__',str(max(18,size*2))).replace('__METRIC__',str(max(20,size*2+4))))
-        self.light.setChecked(not is_dark_mode());self.dark.setChecked(is_dark_mode());self.donut.update()
+        self.donut.update()
         for i in range(self.route_items.count()):self.route_items.itemAt(i).widget().update()
     def choose_theme(self,value):
         QSettings().setValue('appearance/theme',value);configure_application(QApplication.instance());self.apply_theme()
@@ -310,6 +309,12 @@ class DashboardPage(QWidget):
         self.total.setText(f'{c["total"]} transfer records / current voyage');self.donut.set_counts(c['counts'])
         for status,count in self.status_totals.items():count.setText(str(c['counts'][status]))
         progress=p.get('progress');self.personnel_donut.set_counts(progress)
+        cargo_counts=c['counts']
+        cargo_summary=(f"Cargo: {c['total']} records · Waiting {cargo_counts['Waiting']} · "
+                       f"On Board {cargo_counts['On Board']} · Done {cargo_counts['Done']}")
+        personnel_summary=(f"Plan progress: {progress['Completed']} completed · {progress['Pending']} pending "
+                           '(planned drop visits)' if progress is not None else 'Personnel plan progress unavailable')
+        self.summary_line.setText(cargo_summary+'\n'+personnel_summary)
         for status,count in self.personnel_status_totals.items():count.setText(str(progress[status]) if progress is not None else '-')
         self.personnel_total.setText(f'{sum(progress.values())} person-times / current voyage' if progress is not None else 'Select a current visit and valid saved plan.')
         self.personnel_total.setToolTip(p.get('list_name','')+' / '+p.get('plan_label',''))

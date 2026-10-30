@@ -1,6 +1,7 @@
 """Read immutable plan metadata first; decode only requested snapshots."""
 import json
 from .personnel_import import PersonnelError, iso_date
+from .source_paths import source_path_key, SourcePathError
 
 
 def validate_plan_shape(value):
@@ -14,6 +15,12 @@ def validate_plan_shape(value):
                       ('drop_passengers','pick_passengers','drop_materials','pick_materials'))
                for s in value['stops'])):
         raise PersonnelError('This plan has an invalid berthing snapshot. Review or regenerate it before saving.')
+    try:
+        for field in ('source_path', 'personnel_source_path'):
+            if value.get(field) is not None:
+                source_path_key(value[field])
+    except SourcePathError as exc:
+        raise PersonnelError(str(exc)) from exc
 
 
 def visible_clause(db, alias='b', include_removed=False):

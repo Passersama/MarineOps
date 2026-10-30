@@ -3,10 +3,17 @@ from __future__ import annotations
 
 import sqlite3
 import copy
-from pathlib import Path, PureWindowsPath
 
 from .personnel_import import PersonnelError, digest
 from .coordination import workspace_files
+from .source_paths import local_source_path, SourcePathError
+
+
+def _local_source(path):
+    try:
+        return local_source_path(path, allow_relative=True)
+    except SourcePathError as exc:
+        raise PersonnelError('Use a local Cargo database copy. ' + str(exc)) from exc
 
 
 def location_signature(location):
@@ -58,7 +65,7 @@ def crew_source_matches(plan, snapshot):
         return False
     allowed = ('create_transfer','edit_transfer','pick_up','deliver','correct_transfer',
                'void_transfer','restore_transfer','normalize_text_case','choose_stop','clear_current_stop')
-    db = sqlite3.connect(Path(snapshot['source_path']).resolve().as_uri() + '?mode=ro', uri=True, timeout=5)
+    db = sqlite3.connect(_local_source(snapshot['source_path']).as_uri() + '?mode=ro', uri=True, timeout=5)
     try:
         db.execute('PRAGMA query_only=ON');db.execute('BEGIN')
         if db.execute('SELECT data_revision FROM app_state WHERE id=1').fetchone()[0] != current:
@@ -72,13 +79,7 @@ def crew_source_matches(plan, snapshot):
 
 
 def read_cargo(path, *, selected_cargo=None, active_only=False):
-    # Saved snapshots are data, not authority to contact a remote file server.
-    # Check the lexical Windows path before resolve()/is_file() can access it.
-    if PureWindowsPath(str(path)).drive.startswith('\\\\'):
-        raise PersonnelError("Use a local Cargo database copy. Network and device paths are not supported for plan sources.")
-    path = Path(path).resolve()
-    if PureWindowsPath(str(path)).drive.startswith('\\\\'):
-        raise PersonnelError("Use a local Cargo database copy. Network and device paths are not supported for plan sources.")
+    path = _local_source(path)
     if not path.is_file():
         raise PersonnelError("The Cargo ledger is unavailable. Open MarineOps first.")
     conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)

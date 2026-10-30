@@ -87,7 +87,16 @@ class WorkspaceManagementTests(unittest.TestCase):
     def test_failed_gateway_open_closes_its_executor(self):
         from cargo_track.personnel_worker import PersonnelGateway
         from concurrent.futures import ThreadPoolExecutor
+        from PySide6.QtWidgets import QApplication
+        import time
+        app=QApplication.instance() or QApplication([])
         executor=ThreadPoolExecutor(max_workers=1)
         with patch('cargo_track.personnel_worker.ThreadPoolExecutor',return_value=executor),patch('cargo_track.personnel_worker.PersonnelService',side_effect=PersonnelError('Invalid database')):
-            with self.assertRaises(PersonnelError):PersonnelGateway(self.f.root/'invalid.sqlite3')
+            gateway=PersonnelGateway(self.f.root/'invalid.sqlite3');errors=[]
+            gateway.open_failed.connect(errors.append)
+            deadline=time.monotonic()+5
+            while not errors and time.monotonic()<deadline:
+                app.processEvents();time.sleep(.01)
+            self.assertEqual(['Invalid database'],errors)
+            gateway.close()
         self.assertTrue(executor._shutdown)

@@ -18,6 +18,7 @@ from cargo_track.domain import AppError
 from cargo_track.personnel_cargo import read_cargo, dependency_hash
 from cargo_track.personnel_import import PersonnelError, read_personnel_excel
 from cargo_track.personnel_service import PersonnelService
+from cargo_track.personnel_read_model import PersonnelReadModel
 from cargo_track.personnel_ui import CrewPlanBuilder
 
 
@@ -28,6 +29,13 @@ class Owner(QWidget):
         self.host=SimpleNamespace(database_path=fixture.cargo_path)
         self.plan_combo=SimpleNamespace(currentData=lambda:fixture.plan)
         self.plan_date=lambda:'2026-10-06'
+
+    @property
+    def read_model(self):
+        return PersonnelReadModel(self.service.path,self.service.ui_state(self.plan_combo.currentData()))
+
+    @property
+    def source(self):return read_cargo(self.host.database_path,active_only=True)
 
 
 class AuditFixTests(unittest.TestCase):

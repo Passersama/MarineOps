@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
+from .source_paths import source_path_key, local_source_path, SourcePathError
 
 
 class ProtectedFileError(ValueError):
@@ -37,9 +38,17 @@ class WorkspaceFiles:
         except OSError:
             return False
 
-    def check_output(self, target, *additional):
+    def check_output(self, target, *additional, source_references=()):
+        # Validate every persisted reference before any file-system operation.
+        references = [p for p in source_references if p]
+        try:
+            for reference in references:source_path_key(reference)
+            sources = {local_source_path(p) for p in references}
+        except SourcePathError as exc:
+            raise ProtectedFileError(str(exc)) from exc
         with self._lock:
             protected = self._paths | {Path(p).resolve() for p in additional if p}
+            protected.update(sources)
             if any(self.same_file(target, p) for p in protected):
                 raise ProtectedFileError("Choose a separate output file. Cargo and personnel databases are protected.")
 

@@ -76,6 +76,8 @@ def validate_contract(problem):
 
 def validate_saved_plan(plan):
     """Validate route AND all four output groups before publishing or exporting."""
+    from .plan_validation import validate_output_groups
+    validate_output_groups(plan)
     problem = plan.get('transport_contract')
     if problem is None:return
     validate_contract(problem)

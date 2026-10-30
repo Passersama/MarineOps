@@ -187,6 +187,12 @@ class PersonnelService:
                                       (plan['family_id'],)).fetchone()[0]
             updated.update(id=identifier, version=version,
                            status='Published' if plan['status'] == 'Published' and not updated['issues'] else 'Draft')
+            if updated['status']=='Published':
+                from .berth_optimization_validation import validate_saved_plan
+                try:validate_saved_plan(updated)
+                except PersonnelError as exc:
+                    updated['status']='Draft'
+                    updated['issues'].append({'task':'','message':str(exc)})
             self.db.execute('INSERT INTO berth_versions VALUES(?,?,?,?,?,?)',
                 (identifier, plan['family_id'], version, updated['status'], encode(updated), now()))
             self.db.execute('INSERT INTO module_history(event,occurred_utc,data) VALUES(?,?,?)',
@@ -458,12 +464,10 @@ class PersonnelService:
         preview_id=snapshot.get('preview_aliases',{}).get(label_key)
         if preview_id is not None:
             return next((r for r in locations if r['id']==preview_id),None)
-        alias = self.db.execute("SELECT * FROM vessel_aliases WHERE source_path=? AND alias=?",
-                                (snapshot.get('ledger_identity') or snapshot["source_path"], label_key)).fetchone()
+        alias = self._alias_record(snapshot.get('ledger_identity') or snapshot['source_path'],label_key)
         if alias is None:
             # Older aliases were keyed by path; retain them only with the recorded Fleet signature.
-            alias=self.db.execute('SELECT * FROM vessel_aliases WHERE source_path=? AND alias=?',
-                                  (snapshot['source_path'],label_key)).fetchone()
+            alias=self._alias_record(snapshot['source_path'],label_key)
         if alias:
             return next((r for r in locations if r["id"] == alias["vessel_id"] and location_signature(r) == alias["signature"]), None)
         # Unambiguous Fleet abbreviations are shown in the import review, never merged by person name.
@@ -491,6 +495,24 @@ class PersonnelService:
             if len(candidates) == 1:
                 return candidates[0]
         return None
+
+    def _alias_record(self,source,label):
+        return self.db.execute('SELECT * FROM vessel_aliases WHERE source_path=? AND alias=?',(source,label)).fetchone()
+
+    def ui_state(self,plan_id=None):
+        """Detached selected-list data; never decode every historical snapshot."""
+        plans=self.plans()
+        if not any(p['id']==plan_id for p in plans):plan_id=plans[0]['id'] if plans else None
+        return {'plans':plans,'plan_id':plan_id,'passengers':self.passengers(plan_id) if plan_id else [],
+                'context':self.context(plan_id),'settings':self.settings(),'versions':self.berth_summaries(),
+                'aliases':[dict(r) for r in self.db.execute('SELECT * FROM vessel_aliases')]}
+
+    def prepare_ui(self,cargo_path,plan_id=None,material_ids=()):
+        from .personnel_cargo import read_cargo
+        source=read_cargo(cargo_path,active_only=True)
+        if material_ids:
+            source=read_cargo(cargo_path,selected_cargo=set(material_ids)|{r['no'] for r in source['cargo']})
+        return {'source':source,'state':self.ui_state(plan_id)}
 
     def crew_records(self, plan_id, snapshot):
         """Resolve imported crew routes independently of legacy execution status."""
@@ -751,7 +773,7 @@ class PersonnelService:
             validate_contract(draft['transport_contract'])
         if published and draft.get("issues"):
             raise PersonnelError("Resolve all plan issues before publishing. You can save a Draft version.")
-        needs_live_check=published and (draft.get('transport_contract') or not draft.get("base_version_id") or draft.get("revision_reviewed"))
+        needs_live_check=published
         if needs_live_check:
             from .personnel_cargo import read_cargo, dependency_hash
             dependencies=draft.get("source_dependencies")
@@ -868,9 +890,9 @@ class PersonnelService:
                 if not isinstance(value,dict) or (value.get('id'),value.get('version'),value.get('status'))!=(identifier,version,status):
                     raise PersonnelError('Berthing plan version metadata is inconsistent.')
                 validate_plan_shape(value)
-                if value.get('transport_contract') is not None:
+                if value.get('transport_contract') is not None or status=='Published':
                     from .berth_optimization_validation import validate_saved_plan,validate_contract
-                    validate_contract(value['transport_contract'])
+                    if value.get('transport_contract') is not None:validate_contract(value['transport_contract'])
                     if status=='Published':validate_saved_plan(value)
             PersonnelService._validate_live_chains(conn)
             for (version,) in conn.execute('SELECT version FROM passengers'):

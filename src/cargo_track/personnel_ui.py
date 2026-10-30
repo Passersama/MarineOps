@@ -29,21 +29,18 @@ from .view_state import PlanViewState
 from .personnel_routes import transfer_name, transfer_origin, leg_order, suggested_leg_order
 from .text_case import personnel_record
 from .text_case_ui import CasePreviewDialog, attach_case_preview
+from .dialogs import GlassDialog, InputDialog as QInputDialog, FileDialog as QFileDialog, prompt
 from .navigation import WorkspaceNavigation,ElidedLabel
 from .berth_plan import (cargo_tasks, task_key, route_options, generate_plan, plan_text, export_plan,
                          plan_review_groups, plan_task_selection, plan_assignments, leg_choices)
 
 
 def message(parent, title, value, error=False):
-    if error:
-        QMessageBox.warning(parent, title, str(value))
-    else:
-        QMessageBox.information(parent, title, str(value))
+    prompt(parent,title,str(value),buttons=('OK',),default='OK')
 
 
 def confirm(parent, title, value):
-    return QMessageBox.question(parent, title, value, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                                QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Yes
+    return prompt(parent,title,value,buttons=('Cancel','Confirm'))=='Confirm'
 
 
 def button(text, callback, primary=False):
@@ -100,7 +97,7 @@ class ReadJob(QRunnable):
             self.signals.failed.emit(str(exc))
 
 
-class NativeDialog(QDialog):
+class NativeDialog(GlassDialog):
     def showEvent(self, event):
         fit_to_screen(self)
         super().showEvent(event)
@@ -248,6 +245,8 @@ class ImportDialog(NativeDialog):
         super().__init__(owner)
         self.owner, self.parsed, self.preview = owner, parsed, None
         self.setWindowTitle("Preview personnel import")
+        self._preview_closed=False
+        self.finished.connect(lambda _:setattr(self,'_preview_closed',True))
         self.resize(1100, 700)
         root = QVBoxLayout(self)
         controls = QHBoxLayout()
@@ -284,7 +283,7 @@ class ImportDialog(NativeDialog):
             else:
                 labels.update([r['from_name'], r['to_name']])
         for label in sorted(labels):
-            if label and owner.service.resolve_location(owner.source, label) is None:
+            if label and owner.read_model.resolve_location(owner.source, label) is None:
                 combo = QComboBox()
                 combo.addItem("Unmatched — save as draft", None)
                 for location in owner.source["locations"]:
@@ -297,7 +296,7 @@ class ImportDialog(NativeDialog):
         root.addWidget(self.aliases)
         recognized = []
         for label in sorted(labels):
-            location = owner.service.resolve_location(owner.source, label)
+            location = owner.read_model.resolve_location(owner.source, label)
             if location:
                 recognized.append(f"{label} → {location['name']}")
         matched = QLabel("Fleet vessel matches: " + ("; ".join(recognized) or "Choose matches above"))
@@ -334,9 +333,18 @@ class ImportDialog(NativeDialog):
                     record[field]=record.get('original_values',{}).get(field,record.get(field,''))
                 record.pop('text_case',None)
                 record.update(personnel_record(record,preserve=self.preserve_case.isChecked()))
-            self.preview = self.owner.service.import_preview(parsed, source,
-                self.owner.plan_combo.currentData(), self.mode.currentData(),
-                self.date.date().toString("yyyy-MM-dd") if self.override_dates.isChecked() else None, crew_list=True)
+            args=(parsed, source, self.owner.plan_combo.currentData(), self.mode.currentData(),
+                  self.date.date().toString("yyyy-MM-dd") if self.override_dates.isChecked() else None)
+            self.owner.run_service_read('import_preview',args,
+                lambda preview:self.render_preview(preview,source),channel='import-preview:'+str(id(self)),
+                failed=lambda error:self.summary.setText(str(error)),kwargs={'crew_list':True})
+        except Exception as exc:
+            self.preview=None;self.summary.setText(str(exc))
+
+    def render_preview(self,preview,source):
+        if getattr(self,'_preview_closed',False):return
+        try:
+            self.preview=preview
             self.preview['aliases']={'source':source,'values':source['preview_aliases']}
             items = self.preview["items"]
             fill_table(self.rows, [[r["data"].get(f, "") if f != "issues" else "; ".join(r["data"]["issues"])
@@ -347,7 +355,7 @@ class ImportDialog(NativeDialog):
                 for column,field in ((2,'name'),(3,'position')):
                     info=item['data'].get('text_case',{}).get(field,{})
                     self.rows.item(index,column).setToolTip('Excel: '+item['data'].get('original_values',{}).get(field,'')+'\nAfter import: '+item['data'].get(field,'')+'\n'+'; '.join(info.get('review',[])))
-            previous = self.owner.service.passengers(self.preview["plan_id"]) if self.preview["plan_id"] else []
+            previous = self.owner.read_model.passengers(self.preview["plan_id"]) if self.preview["plan_id"] else []
             for index, item in enumerate(items):
                 combo = QComboBox()
                 combo.addItem("Create a separate entry", None)
@@ -377,12 +385,13 @@ class ImportDialog(NativeDialog):
         if not self.preview or not hasattr(self, "matches"):
             return
         selected = {w.currentData() for w in self.matches if w.currentData()}
-        old = self.owner.service.passengers(self.preview["plan_id"]) if self.preview["plan_id"] else []
+        old = self.owner.read_model.passengers(self.preview["plan_id"]) if self.preview["plan_id"] else []
         missing = [r for r in old if r["id"] not in selected]
         self.missing.setText("Not matched in this file: " + (", ".join(r['name'] for r in missing) or "None") +
             (". Append keeps them unchanged." if self.mode.currentData() != "replace" else ". Confirm replacement to remove these old entries."))
 
     def commit(self):
+        if not self.owner._action_prepared:return self.owner.prepare_action(self.commit)
         try:
             if self.preview is None:
                 raise PersonnelError("Refresh the preview first.")
@@ -390,7 +399,7 @@ class ImportDialog(NativeDialog):
             if aliases != self.preview.get('aliases', {}).get('values', {}):
                 self.refresh()
                 raise PersonnelError('Vessel matches changed. Review the refreshed preview before confirming import.')
-            if read_cargo(self.owner.host.database_path,active_only=True)["source_hash"] != self.preview["source_hash"]:
+            if self.owner.source["source_hash"] != self.preview["source_hash"]:
                 raise PersonnelError("Cargo sources changed. Close this preview and import again.")
             if self.override_dates.isChecked():
                 requested_date = self.date.date().toString("yyyy-MM-dd")
@@ -469,9 +478,9 @@ class CrewPlanBuilder(NativeDialog):
         if inline:
             self.setWindowFlags(Qt.WindowType.Widget)
         self.owner = owner
-        self.source = owner.service.planning_source(read_cargo(owner.host.database_path,active_only=True))
+        self.source = owner.read_model.planning_source(copy.deepcopy(owner.source))
         self.source['require_personnel_port_calls'] = not base_plan or base_plan.get('require_personnel_port_calls', False)
-        self.personnel_context = owner.service.context((base_plan or {}).get('personnel_plan_id') or owner.plan_combo.currentData())
+        self.personnel_context = owner.read_model.context((base_plan or {}).get('personnel_plan_id') or owner.plan_combo.currentData())
         self.source_generation = workspace_files.generation(owner.host.database_path)
         self.base_plan = base_plan
         self.transport_contract=copy.deepcopy((base_plan or {}).get('transport_contract'))
@@ -496,7 +505,7 @@ class CrewPlanBuilder(NativeDialog):
         self.personnel_plan_id = owner.plan_combo.currentData()
         if base_plan and base_plan.get("personnel_plan_id"):
             self.personnel_plan_id = base_plan["personnel_plan_id"]
-        self.crew = owner.service.crew_records(self.personnel_plan_id, self.source) if self.personnel_plan_id else []
+        self.crew = owner.read_model.crew_records(self.personnel_plan_id, self.source) if self.personnel_plan_id else []
         self.plan_date = owner.plan_date()
         self.route = PlanStopList()
         self.route.setAccessibleName("Final plan stop order — changes do not affect Cargo")
@@ -505,7 +514,7 @@ class CrewPlanBuilder(NativeDialog):
         if base_plan:
             base_identity=base_plan.get('source_identity')
             if not base_identity and base_plan['source_path']!=self.source['source_path']:
-                try:base_identity=read_cargo(base_plan['source_path'],selected_cargo=[])['ledger_identity']
+                try:base_identity=self.source['ledger_identity'] if base_plan['source_path']==self.source['source_path'] else None
                 except PersonnelError:pass
             if ((base_identity!=self.source.get('ledger_identity') if base_identity
                  else base_plan['source_path']!=self.source['source_path']) or base_plan['voyage_id']!=self.source['voyage_id']):
@@ -535,8 +544,8 @@ class CrewPlanBuilder(NativeDialog):
         if (not base_plan and shore is not None and shore not in vessel_ids
                 and any(r.get('to_id') == shore for r in self.crew)):
             self.append_stop({'id': 'plan:' + str(uuid4()), 'vessel_id': shore,
-                              'vessel_name_snapshot': owner.service.port_name(self.source)})
-            self.added_names.append(owner.service.port_name(self.source))
+                              'vessel_name_snapshot': owner.read_model.port_name(self.source)})
+            self.added_names.append(owner.read_model.port_name(self.source))
         route_box = QHBoxLayout()
         route_panel = QVBoxLayout()
         route_panel.addWidget(QLabel("Final plan order (drag to reorder)"))
@@ -691,7 +700,7 @@ class CrewPlanBuilder(NativeDialog):
 
     def check_complete_route(self):
         try:
-            plan=self.build()
+            plan=self.build(check_sources=False)
             if plan['issues']:message(self,'Route needs review','\n'.join(i['message'] for i in plan['issues']),True)
             elif plan.get('transport_contract'):message(self,'Complete route','All required transport legs have valid pickup and delivery assignments.')
             else:message(self,'Manual route','Manual assignments are valid. Use Auto plan to check complete delivery of every included task and find the minimum calls.')
@@ -752,8 +761,8 @@ class CrewPlanBuilder(NativeDialog):
         previous = {task_key(t): (include.isChecked(), combo.currentData())
                     for t, include, combo in zip(self.tasks, self.includes, self.assignments)}
         links = {task_key(t): (t.get('previous_task_id'), t.get('person_id'), leg_order(t)) for t in self.tasks}
-        self.crew = self.owner.service.crew_records(self.personnel_plan_id, self.source) if self.personnel_plan_id else []
-        self.personnel_context=self.owner.service.context(self.personnel_plan_id)
+        self.crew = self.owner.read_model.crew_records(self.personnel_plan_id, self.source) if self.personnel_plan_id else []
+        self.personnel_context=self.owner.read_model.context(self.personnel_plan_id)
         # Master roster changes invalidate the optimizer's frozen task contract.
         if not initial and self.transport_contract:
             self.transport_contract=None
@@ -837,7 +846,7 @@ class CrewPlanBuilder(NativeDialog):
             saved = previous.get(identifier, (False, stored_assignments.get(identifier)))[1]
             if saved is not None and (initial or saved in getattr(combo, 'feasible_options', [])):
                 self._retain_assignment(combo,saved)
-        self.personnel_context=self.owner.service.context(self.personnel_plan_id)
+        self.personnel_context=self.owner.read_model.context(self.personnel_plan_id)
         self.sync_endpoints()
         if hasattr(self,'personnel_title'):
             people=len({t.get('person_id') or t['id'] for t in self.tasks})
@@ -912,11 +921,11 @@ class CrewPlanBuilder(NativeDialog):
             row = self.rows.currentRow()
             if row < 0 or self.tasks[row]['kind'] != 'Passengers':
                 raise PersonnelError('Select a passenger to add their next transfer leg.')
-            old = self.owner.service.passenger(self.tasks[row]['id'])
+            old = self.owner.read_model.passenger(self.tasks[row]['id'])
             initial = {k: old.get(k, '') for k in ('name', 'position', 'nationality')}
             initial.update(from_id=old.get('to_id'), from_name=old.get('to_name', ''), to_id=None, to_name='',
                            date=self.plan_date, direction='Transfer')
-            form = PassengerForm(self.owner.service, self.source, self.plan_date, initial, self)
+            form = PassengerForm(self.owner.read_model, self.source, self.plan_date, initial, self)
             form.setWindowTitle('Next transfer leg — ' + old['name']);form.name.setReadOnly(True)
             if form.exec() == QDialog.DialogCode.Accepted:
                 def added(_):
@@ -945,7 +954,7 @@ class CrewPlanBuilder(NativeDialog):
         try:
             if not self.personnel_plan_id:
                 raise PersonnelError("Create a crew list in the Personnel page first.")
-            form = PassengerForm(self.owner.service, self.source, self.plan_date, parent=self)
+            form = PassengerForm(self.owner.read_model, self.source, self.plan_date, parent=self)
             if form.exec() == QDialog.DialogCode.Accepted:
                 def added(value):
                     self.reload_tasks()
@@ -961,7 +970,7 @@ class CrewPlanBuilder(NativeDialog):
             if index < 0 or self.tasks[index]["kind"] != "Passengers":
                 raise PersonnelError("Select a passenger row to edit. Cargo materials are managed in Cargo.")
             task = self.tasks[index]
-            form = PassengerForm(self.owner.service, self.source, self.plan_date, task, self)
+            form = PassengerForm(self.owner.read_model, self.source, self.plan_date, task, self)
             if form.exec() == QDialog.DialogCode.Accepted:
                 data=form.data()
                 # An explicit form submission supersedes draft overlays for the fields it saves.
@@ -1033,7 +1042,7 @@ class CrewPlanBuilder(NativeDialog):
 
     def _refresh_assignments(self):
         source = self.route_snapshot()
-        names = {s["id"]: f"{i:02d}. {s['vessel_name_snapshot']}" for i, s in enumerate(source["stops"], 1)} | {"PORT": self.owner.service.port_name(source)}
+        names = {s["id"]: f"{i:02d}. {s['vessel_name_snapshot']}" for i, s in enumerate(source["stops"], 1)} | {"PORT": self.owner.read_model.port_name(source)}
         selected = plan_task_selection(self.base_plan) if self.base_plan else set()
         available = set(self.base_plan.get("available_tasks", selected)) if self.base_plan else set()
         controls = sorted(zip(self.tasks, self.includes, self.assignments), key=lambda entry: leg_order(entry[0]))
@@ -1070,15 +1079,18 @@ class CrewPlanBuilder(NativeDialog):
         self.sync_endpoints()
         self.changed()
 
-    def build(self):
-        self.owner.service.assert_context(self.personnel_context)
+    def build(self,check_sources=True):
+        self.owner.read_model.assert_context(self.personnel_context)
         if (self.personnel_plan_id!=self.owner.plan_combo.currentData() or self.source_generation!=workspace_files.generation(self.owner.host.database_path)
             or str(Path(self.owner.host.database_path).resolve())!=self.source['source_path']):
             raise PersonnelError("The selected crew list or Cargo database changed. Reopen the plan editor.")
         route_source = self.route_snapshot()
         dependencies=dependency_spec(route_source,self.crew,[int(t['id']) for t in self.materials] if self.inline else
                                     [int(t['id']) for t,include in zip(self.tasks,self.includes) if t['kind']=='Materials' and include.isChecked()])
-        live_source=read_cargo(self.owner.host.database_path,selected_cargo=dependencies['cargo_ids'])
+        # Synchronous source verification remains an explicit diagnostic API.
+        # UI actions prepare these inputs asynchronously; publication rechecks in its worker.
+        live_source=(read_cargo(self.owner.host.database_path,selected_cargo=dependencies['cargo_ids'])
+                     if check_sources else self.owner.source)
         if dependency_hash(live_source,dependencies) != dependency_hash(self.source,dependencies):
             raise PersonnelError("Cargo sources changed. Open the final plan builder again.")
         people, cargo, assignments = list(self.crew), [int(t["id"]) for t in self.materials] if self.inline else [], {}
@@ -1099,12 +1111,12 @@ class CrewPlanBuilder(NativeDialog):
                     cargo.append(int(task["id"]))
                 if assignment.currentData() is not None:
                     assignments[task_key(task)] = assignment.currentData()
-        plan = generate_plan(route_source, people, cargo, self.plan_date, self.owner.service.port_name(self.source),
+        plan = generate_plan(route_source, people, cargo, self.plan_date, self.owner.read_model.port_name(self.source),
                              mode="Final", assignments=assignments, personnel_plan_id=self.personnel_plan_id,selections=selections)
         plan['personnel_context']=copy.deepcopy(self.personnel_context)
         if self.optimization:plan['optimization']=copy.deepcopy(self.optimization)
         plan['personnel_source_path']=str(self.owner.service.path)
-        plan["transfer_vessel"] = self.owner.service.settings().get("transfer_vessel_name") or plan["transfer_vessel"]
+        plan["transfer_vessel"] = self.owner.read_model.settings().get("transfer_vessel_name") or plan["transfer_vessel"]
         if self.base_plan:
             if self.base_plan.get("family_id"):
                 plan["family_id"] = self.base_plan["family_id"]
@@ -1138,6 +1150,9 @@ class PersonnelPage(QWidget):
         self._write_pending=False
         self._latest_reads={}
         self._selected_crew_id=None
+        self._loading_list=False
+        self._version_cache={}
+        self._action_prepared=False
         self.view_state=PlanViewState()
         self._crew_source_rows=[]
         self._validation_timer=QTimer(self);self._validation_timer.setSingleShot(True);self._validation_timer.setInterval(220)
@@ -1146,6 +1161,7 @@ class PersonnelPage(QWidget):
         self.source, self.draft, self.saved_plan, self.rows_data, self._jobs = None, None, None, [], []
         self.live_builder = None
         self._build()
+        self.service.open_failed.connect(self.show_error)
         for shortcut, callback in ((QKeySequence.StandardKey.Find, self.search.setFocus),
                                    (QKeySequence.StandardKey.New, self.add_passenger),
                                    ('F5', self.refresh_source), ('F1', lambda:self.host.open_help('personnel'))):
@@ -1155,6 +1171,36 @@ class PersonnelPage(QWidget):
             action.triggered.connect(callback)
             self.addAction(action)
         self.refresh_source()
+
+    @property
+    def read_model(self):return self.service.read_model
+
+    def prepare_action(self,callback,plan=None):
+        plan=plan or self.draft or self.saved_plan or {}
+        plan_id=plan.get('personnel_plan_id') or self.plan_combo.currentData()
+        material_ids=plan.get('source_dependencies',{}).get('cargo_ids',[])
+        def prepared(value):
+            self.source=value['source']
+            self._action_prepared=True
+            try:callback()
+            finally:self._action_prepared=False
+        return self.run_service_read('prepare_ui',(str(self.host.database_path),plan_id,material_ids),prepared,channel='action-source')
+
+    def run_service_read(self,method,args,callback,channel=None,failed=None,kwargs=None):
+        token=object();self._jobs.append(token)
+        epoch=self._lifecycle_epoch;request=str(uuid4())
+        if channel:self._latest_reads[channel]=request
+        def finished(value,error=False):
+            self._jobs.remove(token)
+            if self._closed or epoch!=self._lifecycle_epoch or (channel and self._latest_reads.get(channel)!=request):return
+            try:
+                if error:(failed or self.show_error)(value)
+                else:callback(value)
+            except Exception as exc:self.show_error(exc)
+        try:
+            if kwargs is not None:return self.service.submit(method,args,finished,lambda error:finished(error,True),kwargs=kwargs)
+            return self.service.submit(method,args,finished,lambda error:finished(error,True))
+        except Exception as exc:finished(str(exc),True)
 
     def run_read(self, function, callback, channel=None,label='Loading',error_context=''):
         self.notice.setText(label+'…')
@@ -1284,7 +1330,7 @@ class PersonnelPage(QWidget):
             if index<0:raise PersonnelError('The original crew list is unavailable. Keep the recovery file for reference.')
             self.plan_combo.setCurrentIndex(index)
             builder=CrewPlanBuilder(self,base_plan=plan)
-            try:self.draft=builder.build()
+            try:self.draft=builder.build(check_sources=False)
             finally:builder.deleteLater()
             self.saved_plan=None;self.show_plan(self.draft)
             self.notice.setText('Recovered as a new draft; review current sources before publishing.')
@@ -1298,15 +1344,12 @@ class PersonnelPage(QWidget):
     def guard_leave(self,continuation):
         if self._write_pending:return False
         if not self.view_state.dirty:return True
-        box=QMessageBox(self);box.setWindowTitle('Unsaved plan changes');box.setText('Save this draft before leaving?')
-        save=box.addButton('Save draft',QMessageBox.ButtonRole.AcceptRole)
-        discard=box.addButton('Discard',QMessageBox.ButtonRole.DestructiveRole)
-        cancel=box.addButton(QMessageBox.StandardButton.Cancel);box.setDefaultButton(cancel);box.exec()
-        if box.clickedButton() is discard:
+        choice=prompt(self,'Unsaved plan changes','Save this draft before leaving?',buttons=('Cancel','Discard','Save draft'))
+        if choice=='Discard':
             self.view_state.dirty=False
             self.invalidate_plan('Unsaved draft changes discarded. Generate or load another plan.')
             return True
-        if box.clickedButton() is save:
+        if choice=='Save draft':
             if self.view_state.source_invalid:
                 if self._preserve_recovery('Source changed; review before reuse'):
                     self.view_state.dirty=False;return True
@@ -1319,12 +1362,12 @@ class PersonnelPage(QWidget):
         self.import_button.style().unpolish(self.import_button);self.import_button.style().polish(self.import_button)
         state=self.view_state
         has_editor=state.editing
-        ready=state.has_plan and not state.source_invalid and not state.busy
+        ready=state.has_plan and not state.source_invalid and not state.busy and not self._loading_list
         self.save_draft_button.setEnabled(ready and has_editor)
         self.save_plan_button.setEnabled(ready and has_editor and state.issue_count==0)
         formal=has_editor or (self.saved_plan or {}).get('status')=='Published'
         self.plan_export_button.setEnabled(ready and state.issue_count==0 and formal and state.export_state!='writing')
-        self.generate_button.setEnabled(not state.busy and bool(self.plan_combo.currentData()))
+        self.generate_button.setEnabled(not state.busy and not self._loading_list and bool(self.plan_combo.currentData()))
         self.plan_edit_button.setEnabled(ready)
         if hasattr(self,'plan_tools'):
             for action in self.plan_tools.menu().actions():
@@ -1348,6 +1391,7 @@ class PersonnelPage(QWidget):
         self.import_button=button('Import Excel',self.import_excel);nav.addWidget(self.import_button);self._write_commands.append(self.import_button)
         for label,callback in (('Refresh',self.refresh_source),('Settings',self.open_settings)):
             command=button(label,callback);nav.addWidget(command);self._write_commands.append(command)
+        self.navigation.layout().removeWidget(self.navigation.about_button);nav.addWidget(self.navigation.about_button)
         root.addLayout(nav)
         controls=QHBoxLayout();controls.addWidget(QLabel('Crew list:'));self.plan_combo=QComboBox();self.plan_combo.setMinimumWidth(240)
         self.plan_combo.setMinimumContentsLength(22);self.plan_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon);self.plan_combo.setAccessibleName('Crew list')
@@ -1359,9 +1403,12 @@ class PersonnelPage(QWidget):
         date_row=QHBoxLayout();date_row.addWidget(QLabel('Plan date:'));self.date=QDateEdit(QDate.currentDate());self.date.setCalendarPopup(True);self.date.setDisplayFormat('yyyy-MM-dd');self.date.setAccessibleName('Berthing plan date')
         self.date.setToolTip('Date printed in the berthing table and Excel heading; crew change dates stay unchanged.')
         date_row.addWidget(self.date);date_row.addStretch();root.addLayout(date_row)
-        self.tabs=QTabWidget();self.tabs.setObjectName('personnelTabs');root.addWidget(self.tabs,1)
+        from .frosted import FrostedFrame
+        self.tabs_surface=FrostedFrame();self.tabs_surface.setObjectName('surface')
+        tabs_layout=QVBoxLayout(self.tabs_surface);tabs_layout.setContentsMargins(12,10,12,10)
+        self.tabs=QTabWidget();self.tabs.setObjectName('personnelTabs');tabs_layout.addWidget(self.tabs);root.addWidget(self.tabs_surface,1)
         personnel=QWidget();layout=QVBoxLayout(personnel);layout.setContentsMargins(0,12,0,0);layout.setSpacing(10);self.tabs.addTab(personnel,'Crew change information')
-        filters=QHBoxLayout();self.search=QLineEdit();self.search.setPlaceholderText('Search name, position, vessel or comment…');self.search.setClearButtonEnabled(True)
+        filters=QHBoxLayout();self.search=QLineEdit();self.search.setPlaceholderText('Search name, position, vessel or comment…');self.search.setAccessibleName('Search personnel entries');self.search.setClearButtonEnabled(True)
         self.view=QComboBox();self.view.addItem('All vessels',None);self.direction=QComboBox();self.direction.addItems(['All directions','Sign-on','Sign-off','Transfer'])
         filters.addWidget(self.search,1);filters.addWidget(self.view);filters.addWidget(self.direction);filters.addWidget(button('Clear filters',self.clear_filters));layout.addLayout(filters)
         actions=QHBoxLayout();self.add_button=button('Add entry',self.add_passenger);self.edit_button=button('Edit crew entry',self.edit_passenger);self.remove_button=button('Remove entry',self.remove_crew_entries)
@@ -1416,7 +1463,7 @@ class PersonnelPage(QWidget):
         self.search.textChanged.connect(lambda *_:self._crew_search_timer.start())
         for signal in (self.view.currentIndexChanged,self.direction.currentIndexChanged):signal.connect(lambda *_:self._apply_crew_filter())
         self.tabs.currentChanged.connect(lambda *_:self._update_plan_actions());self.passenger_table.itemSelectionChanged.connect(self.selection_changed)
-        self.refresh_plans();self.refresh_versions();self.date.dateChanged.connect(self.plan_date_changed);self._update_plan_actions()
+        self.date.dateChanged.connect(self.plan_date_changed);self._update_plan_actions()
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -1425,6 +1472,15 @@ class PersonnelPage(QWidget):
     def _adapt_plan(self):
         if not hasattr(self,'plan_split'):return
         width=self.width();left=190 if width<1250 else round(width*.15);right=260 if width<1250 else round(width*.31)
+        roster_compact=width<1050
+        if getattr(self,'_roster_compact',None)!=roster_compact:
+            self._roster_compact=roster_compact
+            widths=(40,105,75,95,95,95,95,120) if roster_compact else (50,165,105,145,140,140,155,160)
+            for column,column_width in enumerate(widths):self.passenger_table.setColumnWidth(column,column_width)
+            headers=self.passenger_table.source_model.headers
+            headers[3]='Movement' if roster_compact else 'Sign-on / Sign-off'
+            headers[6]='Crew date' if roster_compact else 'Crew change date'
+            self.passenger_table.source_model.headerDataChanged.emit(Qt.Orientation.Horizontal,3,6)
         compact=width<1250
         count=self.live_builder.route.count() if self.live_builder else self.stops.count()
         if count>12:
@@ -1466,14 +1522,19 @@ class PersonnelPage(QWidget):
             self.notice.setText('')
             if self.saved_plan and not source_matches(self.saved_plan,source):
                 self.plan_notice.setText("Cargo source changed. The saved version remains unchanged; generate a new draft for current work.")
-            self.refresh_rows()
+            self.refresh_plans(force=True)
         self.run_read(lambda: read_cargo(cargo_path,active_only=True), received,channel='cargo-source')
 
-    def refresh_plans(self, selected=None):
+    def refresh_plans(self, selected=None, force=False):
         selected = selected or self.plan_combo.currentData()
+        if self.read_model.state and not any(p['id']==selected for p in self.read_model.plans()):
+            selected=self.read_model.state.get('plan_id')
+        if force or not self.read_model.state or (selected and selected!=self.read_model.state.get('plan_id')):
+            return self.run_service_read('ui_state',(selected,),lambda _:self.refresh_plans(selected),channel='crew-state')
+        self._loading_list=False;self.tabs.setEnabled(not self._write_pending)
         self.plan_combo.blockSignals(True)
         self.plan_combo.clear()
-        for p in self.service.plans():
+        for p in self.read_model.plans():
             self.plan_combo.addItem(p["name"], p["id"])
             self.plan_combo.setItemData(self.plan_combo.count()-1, f"Crew list reference date: {p['date']}", Qt.ItemDataRole.ToolTipRole)
         index = self.plan_combo.findData(selected)
@@ -1481,6 +1542,7 @@ class PersonnelPage(QWidget):
             self.plan_combo.setCurrentIndex(index)
         self.plan_combo.blockSignals(False)
         self.plan_changed()
+        self.refresh_versions()
 
     def plan_changed(self):
         current=self.plan_combo.currentData()
@@ -1490,12 +1552,23 @@ class PersonnelPage(QWidget):
             def switched():self.plan_combo.setCurrentIndex(self.plan_combo.findData(current))
             if self.guard_leave(switched):switched()
             return
+        if current and current!=self.read_model.state.get('plan_id'):
+            self._loading_list=True;self.tabs.setEnabled(False);self._update_plan_actions()
+            def loaded(_):
+                self._loading_list=False;self.tabs.setEnabled(not self._write_pending)
+                if not any(p['id']==current for p in self.read_model.plans()):
+                    return self.refresh_plans(self.read_model.state.get('plan_id'))
+                self.plan_changed()
+            def failed(error):
+                self._loading_list=False;self.tabs.setEnabled(not self._write_pending)
+                self._update_plan_actions();self.show_error(error)
+            return self.run_service_read('ui_state',(current,),loaded,channel='crew-state',failed=failed)
         if current!=self._selected_crew_id:
             self._selected_crew_id=current
             self.invalidate_plan('Crew list changed. Generate a fresh plan for the selected list.')
-        selected = next((p for p in self.service.plans() if p["id"] == self.plan_combo.currentData()), None)
+        selected = next((p for p in self.read_model.plans() if p["id"] == self.plan_combo.currentData()), None)
         if selected and not self.draft and not self.saved_plan:
-            dates = {r.get("date") for r in self.service.passengers(selected["id"]) if r["status"] != "Cancelled" and r.get("date")}
+            dates = {r.get("date") for r in self.read_model.passengers(selected["id"]) if r["status"] != "Cancelled" and r.get("date")}
             self.date.setDate(QDate.fromString(next(iter(dates)) if len(dates) == 1 else selected["date"], "yyyy-MM-dd"))
         self.refresh_rows()
         self._update_plan_actions()
@@ -1518,8 +1591,10 @@ class PersonnelPage(QWidget):
     def refresh_rows(self):
         if not self.source:
             return
+        if self.plan_combo.currentData()!=self.read_model.state.get('plan_id'):
+            return self.plan_changed()
         selected={r['id'] for r in self.selected()} if self.rows_data else set()
-        rows = self.service.crew_records(self.plan_combo.currentData(), self.source) if self.plan_combo.currentData() else []
+        rows = self.read_model.crew_records(self.plan_combo.currentData(), self.source) if self.plan_combo.currentData() else []
         self._crew_source_rows=rows
         for row in rows:
             row["route_issues"] = [p for p in row.get("issues", []) if p != "Missing date"]
@@ -1571,7 +1646,7 @@ class PersonnelPage(QWidget):
 
     def clear_version_history(self, all_versions=False):
         if not self.guard_leave(lambda:self.clear_version_history(all_versions)):return
-        versions=self.service.berth_summaries()
+        versions=self.read_model.berth_summaries()
         identifiers=[p['id'] for p in versions] if all_versions else ([self.versions.currentData()] if self.versions.currentData() else [])
         if not identifiers:return self.show_error('There are no saved versions to remove.')
         if not confirm(self,'Clear version history',f'Remove {len(identifiers)} saved version(s) from Version history? Snapshots remain in the database for audit and backup. Crew entries and Cargo are unaffected.'):
@@ -1585,6 +1660,7 @@ class PersonnelPage(QWidget):
         except Exception as exc:self.show_error(exc)
 
     def import_excel(self):
+        if not self._action_prepared:return self.prepare_action(self.import_excel)
         if not self.source:
             return self.show_error("Wait for the Cargo source to load.")
         path, _ = QFileDialog.getOpenFileName(self, "Import personnel Excel", "", "Excel workbook (*.xlsx)")
@@ -1609,7 +1685,7 @@ class PersonnelPage(QWidget):
                     mapping, header = dialog.mapping()
                     self.run_read(lambda: read_personnel_excel(path, chosen, mapping, header), preview)
                     return
-                self.source = read_cargo(self.host.database_path,active_only=True)
+                self.source = copy.deepcopy(self.source)
                 self.import_parsed(parsed)
             self.run_read(read, preview)
         self.run_read(lambda: workbook_sheets(path), choose)
@@ -1625,7 +1701,7 @@ class PersonnelPage(QWidget):
         plan_id=self.plan_combo.currentData()
         if not plan_id or not self.guard_leave(self.normalize_names):return
         try:
-            proposals=self.service.text_case_preview(plan_id)
+            proposals=self.read_model.text_case_preview(plan_id)
             if not proposals:return message(self,'Crew names','No spelling changes are suggested.')
             dialog=CasePreviewDialog(proposals,self)
             if dialog.exec()==QDialog.DialogCode.Accepted:
@@ -1635,11 +1711,12 @@ class PersonnelPage(QWidget):
         except Exception as exc:self.show_error(exc)
 
     def add_passenger(self):
+        if not self._action_prepared:return self.prepare_action(self.add_passenger)
         try:
             if not self.plan_combo.currentData():
                 raise PersonnelError("Create a personnel plan first.")
-            self.source = read_cargo(self.host.database_path,active_only=True)
-            dialog = PassengerForm(self.service, self.source, self.plan_date(), parent=self)
+            self.source = copy.deepcopy(self.source)
+            dialog = PassengerForm(self.read_model, self.source, self.plan_date(), parent=self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 def added(value):
                     self.crew_changed()
@@ -1648,13 +1725,14 @@ class PersonnelPage(QWidget):
             self.show_error(exc)
 
     def edit_passenger(self):
+        if not self._action_prepared:return self.prepare_action(self.edit_passenger)
         try:
             selected = self.selected()
             if len(selected) != 1:
                 return
-            self.source = read_cargo(self.host.database_path,active_only=True)
+            self.source = copy.deepcopy(self.source)
             row = selected[0]
-            dialog = PassengerForm(self.service, self.source, self.plan_date(), row, self)
+            dialog = PassengerForm(self.read_model, self.source, self.plan_date(), row, self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 def edited(value):
                     self.crew_changed()
@@ -1679,19 +1757,21 @@ class PersonnelPage(QWidget):
             self.live_builder.sync_crew()
             self.refresh_live_preview()
         elif self.saved_plan and self.saved_plan.get('mode') == 'Final':
-            latest=self.service.latest_berth(self.saved_plan['family_id'])
-            if latest and latest['id'] != self.saved_plan['id']:
-                self.saved_plan=latest;self.draft=None;self.show_plan(latest)
+            def received(latest):
+                if latest and self.saved_plan and latest['id'] != self.saved_plan['id']:
+                    self.saved_plan=latest;self.draft=None;self.show_plan(latest)
+            self.run_service_read('latest_berth',(self.saved_plan['family_id'],),received,channel='current-family')
         if hasattr(self.host, 'dashboard_page'):self.host.dashboard_page.schedule_refresh()
 
     def generate(self):
+        if not self._action_prepared:return self.prepare_action(self.generate)
         if not self.guard_leave(self.generate):return
         try:
             dialog = CrewPlanBuilder(self)
             try:
                 if dialog.exec() != QDialog.DialogCode.Accepted:
                     return
-                self.draft = dialog.build()
+                self.draft = dialog.build(check_sources=False)
                 self.saved_plan = None
                 self.show_plan(self.draft)
             finally:
@@ -1778,7 +1858,7 @@ class PersonnelPage(QWidget):
         if self.live_builder is None:
             return
         try:
-            self.draft = self.live_builder.build()
+            self.draft = self.live_builder.build(check_sources=False)
             self.saved_plan = None
             self.update_plan_preview(self.draft)
             if show:
@@ -1807,12 +1887,12 @@ class PersonnelPage(QWidget):
             current = self.draft or self.saved_plan or {}
             route_text = ""
             if self.review_task.startswith("Materials:"):
-                source = read_cargo(self.host.database_path,selected_cargo=[int(self.review_task.split(':',1)[1])])
+                source = self.source
                 record = next((r for r in source["cargo"] if str(r["no"]) == self.review_task.split(":", 1)[1]), None)
                 if record:
                     route_text = f"\nFrom: {record['from_name_snapshot']}\nTo: {record['to_name_snapshot']}\n"
             elif self.review_task.startswith("Passengers:"):
-                record = next((r for r in self.service.crew_records(current.get("personnel_plan_id"), read_cargo(self.host.database_path,active_only=True))
+                record = next((r for r in self.read_model.crew_records(current.get("personnel_plan_id"), self.source)
                                if r["id"] == self.review_task.split(":", 1)[1]), None)
                 if record:
                     route_text = f"\nFrom: {record['from_name']}\nTo: {record['to_name']}\n"
@@ -1865,15 +1945,16 @@ class PersonnelPage(QWidget):
         layout.addWidget(button('Close',dialog.accept));dialog.exec()
 
     def edit_review_entry(self):
+        if not self._action_prepared:return self.prepare_action(self.edit_review_entry)
         try:
             current = self.draft or self.saved_plan
-            source = read_cargo(self.host.database_path,active_only=True)
+            source = self.source
             identifier = self.review_task.split(":", 1)[1]
-            records = self.service.crew_records(current.get("personnel_plan_id"), source)
+            records = self.read_model.crew_records(current.get("personnel_plan_id"), source)
             record = next((r for r in records if r["id"] == identifier), None)
             if record is None:
                 return message(self, "Entry no longer in the crew list", "This version refers to an older crew entry. Choose Edit plan to rebuild it with the current crew list.")
-            form = PassengerForm(self.service, source, self.plan_date(), record, self)
+            form = PassengerForm(self.read_model, source, self.plan_date(), record, self)
             if form.exec() == QDialog.DialogCode.Accepted:
                 data=form.data()
                 def edited(value):
@@ -1882,7 +1963,7 @@ class PersonnelPage(QWidget):
                         if data.get(field)!=record.get(field):
                             revised.get('draft_edits',{}).get('Passengers:'+identifier,{}).pop(field,None)
                     builder = CrewPlanBuilder(self, base_plan=revised)
-                    try:self.draft = builder.build()
+                    try:self.draft = builder.build(check_sources=False)
                     finally:builder.deleteLater()
                     self.saved_plan = None
                     self.refresh_rows()
@@ -1892,9 +1973,10 @@ class PersonnelPage(QWidget):
             self.show_error(exc)
 
     def save_version(self, published,on_saved=None):
+        if not self._action_prepared:return self.prepare_action(lambda:self.save_version(published,on_saved))
         try:
             if self.live_builder is not None:
-                self.draft = self.live_builder.build()
+                self.draft = self.live_builder.build(check_sources=False)
             if self.draft is None:
                 raise PersonnelError("Generate or copy a plan draft first.")
             def saved(value):
@@ -1910,7 +1992,7 @@ class PersonnelPage(QWidget):
 
     def refresh_versions(self, selected=None):
         self.versions.clear()
-        for plan in self.service.berth_summaries():
+        for plan in self.read_model.berth_summaries():
             self.versions.addItem(f"{plan['date']} · {plan['voyage_name']} · {plan['mode']} · {plan['status']} v{plan['version']}", plan["id"])
         if selected:
             self.versions.setCurrentIndex(self.versions.findData(selected))
@@ -1919,12 +2001,26 @@ class PersonnelPage(QWidget):
 
     def selected_version(self):
         identifier = self.versions.currentData()
-        return self.service.berth_version(identifier)
+        return self._version_cache.get(identifier)
 
     def load_version(self):
         if not self.guard_leave(self.load_version):return
+        identifier=self.versions.currentData()
+        if not identifier:return self.show_error('Choose a saved version to load.')
+        def received(plan):
+            if not plan:return self.show_error('This version is no longer available.')
+            self._version_cache={identifier:plan}
+            def prepared():
+                if not any(v['id']==identifier for v in self.read_model.berth_summaries()):
+                    return self.show_error('This version was removed while loading. Choose another version.')
+                self.refresh_plans(plan.get('personnel_plan_id'))
+                self.refresh_versions(identifier)
+                self._display_version(plan)
+            self.prepare_action(prepared,plan=plan)
+        self.run_service_read('berth_version',(identifier,),received,channel='version')
+
+    def _display_version(self,plan):
         try:
-            plan = self.selected_version()
             if not plan:
                 raise PersonnelError("Choose a saved version to load.")
             if plan.get('personnel_plan_id') and self.plan_combo.findData(plan['personnel_plan_id'])>=0:
@@ -1932,7 +2028,7 @@ class PersonnelPage(QWidget):
             if plan["mode"] != "Final":
                 builder = CrewPlanBuilder(self, base_plan=plan)
                 try:
-                    self.draft = builder.build()
+                    self.draft = builder.build(check_sources=False)
                 finally:
                     builder.deleteLater()
                 self.saved_plan = None
@@ -1942,22 +2038,23 @@ class PersonnelPage(QWidget):
             else:
                 self.saved_plan, self.draft = plan, None
                 self.show_plan(plan)
-                if not source_matches(plan,read_cargo(self.host.database_path,selected_cargo=plan.get('source_dependencies',{}).get('cargo_ids'))):
+                if not source_matches(plan,self.source):
                     self.plan_notice.setText("Saved snapshot loaded; Cargo sources differ. Choose Edit plan to use current data and save a new version.")
         except Exception as exc:
             self.show_error(exc)
 
     def copy_complete(self):
+        if not self._action_prepared:return self.prepare_action(self.copy_complete)
         try:
             if self.live_builder is not None:
                 self.plan_views.setCurrentWidget(self.live_builder)
                 return
             plan = self.draft or self.saved_plan or self.selected_version()
             if plan is None:
-                raise PersonnelError("Choose a saved plan.")
+                return self.load_version()
             builder = CrewPlanBuilder(self, base_plan=plan)
             try:
-                self.draft = builder.build()
+                self.draft = builder.build(check_sources=False)
             finally:
                 builder.deleteLater()
             self.saved_plan = None
@@ -1966,10 +2063,11 @@ class PersonnelPage(QWidget):
             self.show_error(exc)
 
     def export(self):
+        if not self._action_prepared:return self.prepare_action(self.export)
         if self.view_state.export_state=='writing':return
         if self.live_builder is not None:
             try:
-                self.draft = self.live_builder.build()
+                self.draft = self.live_builder.build(check_sources=False)
             except Exception as exc:
                 return self.show_error(exc)
         current=self.draft or self.saved_plan
@@ -1978,7 +2076,7 @@ class PersonnelPage(QWidget):
         default=f"{current['date'].replace('-','')}_Fleet Personnel Transfer Plan.xlsx"
         path,_=QFileDialog.getSaveFileName(self,'Export berthing plan',str(self.service.path.parent/default),'Excel workbook (*.xlsx)')
         if not path:return
-        try:workspace_files.check_output(Path(path),current.get('source_path'),str(self.service.path))
+        try:workspace_files.check_output(Path(path),str(self.service.path),source_references=(current.get('source_path'),))
         except Exception as exc:return self.show_error(exc)
         def output(plan):
             self.view_state.export_state='writing';self._update_plan_actions()
@@ -2002,13 +2100,14 @@ class PersonnelPage(QWidget):
         output(self.saved_plan)
 
     def open_settings(self):
+        if not self._action_prepared:return self.prepare_action(self.open_settings)
         dialog = NativeDialog(self)
         dialog.setWindowTitle("Personnel and plan settings")
         dialog.resize(680, 460)
         root, form = QVBoxLayout(dialog), QFormLayout()
-        settings = self.service.settings()
-        shared_source = read_cargo(self.host.database_path,active_only=True)
-        port = QLineEdit(self.service.port_name(shared_source))
+        settings = self.read_model.settings()
+        shared_source = self.source
+        port = QLineEdit(self.read_model.port_name(shared_source))
         port.setMaxLength(120)
         port.setAccessibleName("Shared port name")
         transfer = QLineEdit(settings.get("transfer_vessel_name", ""))
@@ -2048,8 +2147,8 @@ class PersonnelPage(QWidget):
                                    f"Backup time: {info['modified']}\nReplace personnel and plans? A safety copy will be retained."):
                             def restored(safety):
                                 self.invalidate_plan('Personnel restored. Generate a fresh plan with the restored crew list.')
-                                port.setText(self.service.port_name(read_cargo(self.host.database_path,active_only=True)))
-                                transfer.setText(self.service.settings().get('transfer_vessel_name',''))
+                                port.setText(self.read_model.port_name(self.source))
+                                transfer.setText(self.read_model.settings().get('transfer_vessel_name',''))
                                 self.refresh_plans()
                                 self.refresh_versions()
                                 self.refresh_source()
@@ -2090,7 +2189,7 @@ class PersonnelPage(QWidget):
                     else:saved()
                 def save_personnel():
                     self.run_write('update_settings',({'transfer_vessel_name':transfer.text(),'backup_directory':backup.text()},),updated,dialog)
-                if port.text().strip() != self.service.port_name(read_cargo(self.host.database_path,active_only=True)):
+                if port.text().strip() != self.read_model.port_name(self.source):
                     if self.host._busy:
                         raise PersonnelError("Wait for Cargo to finish saving before changing the port name.")
                     self.host._submit("set_setting", {"key":"port_name", "value":port.text().strip()}, "Shared port name saved.", on_success=save_personnel)

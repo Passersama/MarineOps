@@ -9,22 +9,23 @@ from uuid import uuid4
 
 from PySide6.QtCore import Qt,QTimer,QThread,Signal,QSettings,QSortFilterProxyModel,QUrl,QMetaObject
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QIcon
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy, QTabBar, QTableView, QTextEdit, QToolButton, QVBoxLayout, QWidget, QAbstractItemView, QListWidget, QListWidgetItem, QTextBrowser
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy, QTabBar, QTableView, QTextEdit, QToolButton, QVBoxLayout, QWidget, QAbstractItemView, QListWidget, QListWidgetItem, QTextBrowser, QScrollArea
 
 from .models import StatusDelegate, TransferTableModel
-from .route_layout import SidebarRouteLayout, SidebarRouteButton
+from .route_layout import RouteLayout, SidebarRouteButton
 from .navigation import WorkspaceNavigation
 from .worker import DatabaseWorker
 from .appearance import asset_path, fit_to_screen, application_font_size, configure_application, is_dark_mode, themed_color
 from .preferences import time_zone_choices
 from .text_case_ui import CasePreviewDialog, attach_case_preview
+from .dialogs import GlassDialog, InputDialog as QInputDialog, FileDialog as QFileDialog, prompt
 
 PAGE_SIZE=200
 OPEN_FILTER={"range":"open","query":"","status":"","vessel_id":""}
 EMPTY_FILTER={"range":"all","query":"","status":"","vessel_id":""}
 
 
-class AppDialog(QDialog):
+class AppDialog(GlassDialog):
     def showEvent(self,event):
         fit_to_screen(self)
         super().showEvent(event)
@@ -71,17 +72,11 @@ class DatabaseClient(QWidget):
 
 
 def info_box(parent,title,message,details=""):
-    box=QMessageBox(parent);box.setIcon(QMessageBox.Icon.Information);box.setWindowTitle(title);box.setText(message)
-    if details:box.setDetailedText(str(details))
-    box.exec()
+    prompt(parent,title,message,details,buttons=('OK',),default='OK')
 
 
-def confirm(parent,title,message,details=""):
-    box=QMessageBox(parent);box.setIcon(QMessageBox.Icon.Warning);box.setWindowTitle(title);box.setText(message)
-    if details:box.setInformativeText(details)
-    box.setStandardButtons(QMessageBox.StandardButton.Cancel|QMessageBox.StandardButton.Yes)
-    box.setDefaultButton(QMessageBox.StandardButton.Cancel)
-    return box.exec()==QMessageBox.StandardButton.Yes
+def confirm(parent,title,message,details="",rows=(),action='Confirm'):
+    return prompt(parent,title,message,details,rows,buttons=('Cancel',action))==action
 
 
 class TransferForm(AppDialog):
@@ -303,7 +298,8 @@ class DetailDialog(AppDialog):
         if operation=="pick_up" and current not in ("from","both") or operation=="deliver" and current not in ("to","both"):
             question="Confirm that this cargo was picked up" if operation=="pick_up" else "Confirm that this cargo was delivered"
             endpoint=row["from_name"] if operation=="pick_up" else row["to_name"]
-            if not confirm(self,"Confirm physical location?",f"{question} at {endpoint}?","This confirmation changes the recorded cargo location."):return
+            action='Confirm pickup' if operation=='pick_up' else 'Confirm delivery'
+            if not confirm(self,action,f"{question} at {endpoint}?","This confirmation changes the recorded cargo location.",(('Cargo',row.get('description','')),('Location',endpoint)),action):return
             payload["confirmed_location"]=True
         self.host._submit(operation,payload,"Transfer updated.",on_success=lambda:self.host._refresh_then(lambda:self.load()))
 
@@ -375,7 +371,9 @@ class CargoTrackWindow(QMainWindow):
             self._compact_header_actions.append(menu.addAction(label,callback))
         for label,section in (('Quick start','start'),('Cargo and status','cargo'),('Delete and restore','delete'),('Fleet and voyages','fleet'),('Search and export','search'),('Backup and recovery','backup'),('Settings and appearance','settings'),('Keyboard shortcuts','keys')):
             help_menu.addAction(label,lambda checked=False,section=section:self.open_help(section))
-        self.header_more.setMenu(menu);nav.addWidget(self.header_more);root.addLayout(nav)
+        self.header_more.setMenu(menu);nav.addWidget(self.header_more)
+        self.navigation.layout().removeWidget(self.navigation.about_button);nav.addWidget(self.navigation.about_button)
+        root.addLayout(nav)
         self.fleet_button.clicked.connect(self.open_fleet);self.voyage_button.clicked.connect(self.open_voyages)
         self.export_button.clicked.connect(self.export_file);self.settings_button.clicked.connect(self.open_settings)
         help_action=QAction('Help',self);help_action.setShortcut(QKeySequence('F1'));help_action.triggered.connect(lambda:self.open_help());self.addAction(help_action)
@@ -383,25 +381,32 @@ class CargoTrackWindow(QMainWindow):
         self.voyage_combo=QComboBox();self.voyage_combo.setMinimumWidth(300);self.voyage_combo.activated.connect(self.choose_voyage)
         context.addWidget(self.voyage_combo);context.addStretch();root.addLayout(context)
 
-        body=QHBoxLayout();body.setSpacing(20);root.addLayout(body,1)
-        self.route_panel=QFrame();self.route_panel.setObjectName('routeSidebar');self.route_panel.setFixedWidth(230)
-        route_root=QVBoxLayout(self.route_panel);route_root.setContentsMargins(0,0,12,0);route_root.setSpacing(8)
-        self.route_summary=QLabel('Stops · 0');self.route_summary.setObjectName('workbenchTitle');route_root.addWidget(self.route_summary)
-        self.route_content=QWidget();self.route_items=SidebarRouteLayout(self.route_content)
-        route_root.addWidget(self.route_content,1)
+        body=QVBoxLayout();body.setSpacing(12);root.addLayout(body,1)
+        from .frosted import FrostedFrame
+        self.route_panel=FrostedFrame();self.route_panel.setObjectName('surface')
+        route_root=QVBoxLayout(self.route_panel);route_root.setContentsMargins(12,10,12,10);route_root.setSpacing(6)
+        route_header=QHBoxLayout()
+        self.route_summary=QLabel('Stops · 0');self.route_summary.setObjectName('workbenchTitle');route_header.addWidget(self.route_summary);route_header.addStretch()
+        self.route_content=QWidget();self.route_items=RouteLayout(self.route_content)
+        self.route_scroll=QScrollArea();self.route_scroll.setWidgetResizable(True);self.route_scroll.setWidget(self.route_content)
+        self.route_scroll.setFrameShape(QFrame.Shape.NoFrame);self.route_scroll.setMaximumHeight(116);self.route_scroll.setMinimumHeight(44)
+        self.route_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        route_root.addWidget(self.route_scroll)
         self.route_hint=QLabel('');self.route_hint.setWordWrap(True);route_root.addWidget(self.route_hint)
         movement=QHBoxLayout();self.previous_button=QPushButton('Previous');self.next_button=QPushButton('Next')
-        movement.addWidget(self.previous_button);movement.addWidget(self.next_button);route_root.addLayout(movement)
+        movement.addWidget(self.previous_button);movement.addWidget(self.next_button);route_header.addLayout(movement)
         route_actions=QHBoxLayout();self.route_add_button=QPushButton('+ Add vessel')
         self.route_actions=QToolButton();self.route_actions.setText('Route actions');self.route_actions.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         route_menu=QMenu(self.route_actions);route_menu.addAction('New voyage',self.new_voyage);route_menu.addAction('Copy previous',self.copy_voyage)
-        self.route_actions.setMenu(route_menu);route_root.addWidget(self.route_add_button);route_root.addWidget(self.route_actions)
+        self.route_actions.setMenu(route_menu);route_header.addWidget(self.route_add_button);route_header.addWidget(self.route_actions);route_root.insertLayout(0,route_header)
         self.previous_button.clicked.connect(lambda:self.move_current_stop(-1));self.next_button.clicked.connect(lambda:self.move_current_stop(1));self.route_add_button.clicked.connect(self.add_vessel_stop)
         body.addWidget(self.route_panel)
         ledger=QVBoxLayout();ledger.setSpacing(12);body.addLayout(ledger,1)
         self._ledger_layout=ledger
         self.stop_panel=QFrame();top=QHBoxLayout(self.stop_panel);top.setContentsMargins(0,0,0,0)
-        self.stop_name=QLabel('Choose the current stop');self.stop_name.setObjectName('workbenchTitle');self.stop_name.setWordWrap(True);top.addWidget(self.stop_name)
+        self.stop_name=QLabel('Choose the current stop');self.stop_name.setObjectName('workbenchTitle');self.stop_name.setWordWrap(True)
+        self.stop_name.setMinimumWidth(self.stop_name.fontMetrics().horizontalAdvance('Choose the current stop')+24);top.addWidget(self.stop_name)
+        top.addSpacing(24)
         self.pickup_count=QPushButton('0 to pick up');self.delivery_count=QPushButton('0 to deliver')
         for widget in (self.pickup_count,self.delivery_count):widget.setFlat(True);widget.setObjectName('countLink');top.addWidget(widget)
         top.addStretch();ledger.addWidget(self.stop_panel)
@@ -427,7 +432,7 @@ class CargoTrackWindow(QMainWindow):
         self.more_button=QToolButton();self.more_button.setText('More');self.more_button.setAccessibleName('More transfer actions and columns');self.more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.more_menu=QMenu(self.more_button);self.more_button.setMenu(self.more_menu)
         for widget in (self.pickup_button,self.deliver_button,self.details_button,self.edit_button,self.more_button):actions.addWidget(widget)
-        actions.addStretch();self.add_button=QPushButton('+ Add cargo');actions.addWidget(self.add_button);ledger.addLayout(actions)
+        actions.addStretch();self.add_button=QPushButton('+ Add cargo');self.add_button.setObjectName('primaryButton');actions.addWidget(self.add_button);ledger.addLayout(actions)
         self.pickup_button.clicked.connect(lambda:self.run_selected_action('pick_up'));self.deliver_button.clicked.connect(lambda:self.run_selected_action('deliver'))
         self.details_button.clicked.connect(self.open_selected_detail);self.edit_button.clicked.connect(self.edit_selected);self.add_button.clicked.connect(self.add_transfer)
         # Retain the status command as a menu editor instead of competing with the
@@ -444,7 +449,7 @@ class CargoTrackWindow(QMainWindow):
         self.table.setAlternatingRowColors(False);self.table.setWordWrap(False);self.table.setShowGrid(False);self.table.verticalHeader().hide()
         self.table.verticalHeader().setDefaultSectionSize(max(42,self.table.fontMetrics().height()+22))
         header=self.table.horizontalHeader();header.setSectionsClickable(True);header.setStretchLastSection(True);header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
-        ledger.addWidget(self.table,1);self.table.doubleClicked.connect(self.open_selected_detail);self.table.selectionModel().currentChanged.connect(self._selection_changed);header.sectionClicked.connect(self._sort_clicked)
+        ledger.addWidget(self.table,1);self.table.doubleClicked.connect(self.open_selected_detail);self.table.selectionModel().currentChanged.connect(self._selection_changed);self.table.selectionModel().selectionChanged.connect(self._selection_rows_changed);header.sectionClicked.connect(self._sort_clicked)
         self._completed_visible=False;self.table.setColumnHidden(7,True)
         footer=QHBoxLayout();footer.addStretch();self.result_label=QLabel('');footer.addWidget(self.result_label)
         self.previous_page=QPushButton('Previous page');self.page_label=QLabel('');self.next_page=QPushButton('Next page')
@@ -473,10 +478,12 @@ class CargoTrackWindow(QMainWindow):
     def _adapt_workbench(self):
         if not hasattr(self,'_compact_filters'):return
         header_buttons=(self.fleet_button,self.voyage_button,self.export_button,self.settings_button)
-        header_width=self.navigation.sizeHint().width()+sum(w.sizeHint().width() for w in header_buttons)+self.header_more.sizeHint().width()+96
+        header_width=self.navigation.sizeHint().width()+sum(w.sizeHint().width() for w in header_buttons)+self.header_more.sizeHint().width()+self.navigation.about_button.sizeHint().width()+96
         header_compact=self.width()<header_width
-        for widget in header_buttons:widget.setVisible(not header_compact)
-        for action in self._compact_header_actions:action.setVisible(header_compact)
+        for widget in header_buttons:
+            widget.setVisible(not header_compact and (not getattr(self,'_sidebar_mode',False) or widget is self.export_button))
+        for action in self._compact_header_actions:
+            action.setVisible(header_compact and (not getattr(self,'_sidebar_mode',False) or action.text() == 'Export cargo'))
         compact=self.width()<1250
         target=self._compact_filters if compact else self._filter_line
         other=self._filter_line if compact else self._compact_filters
@@ -485,7 +492,6 @@ class CargoTrackWindow(QMainWindow):
             if compact:target.addWidget(widget)
             else:target.insertWidget(index,widget)
         self.status_filter.setMinimumWidth(190)
-        self.route_panel.setFixedWidth(self._route_sidebar_width())
         long_compact=compact and self.snapshot and len(self.snapshot['stops'])>12
         if long_compact and self._cargo_actions_line.indexOf(self.add_button)>=0:
             self._cargo_actions_line.removeWidget(self.add_button);self._ledger_layout.insertWidget(3,self.add_button,0,Qt.AlignmentFlag.AlignRight)
@@ -636,6 +642,7 @@ class CargoTrackWindow(QMainWindow):
             label=f"{index+1:02d}   {stop['vessel_name_snapshot']}"
             if stop["id"]==current:label+="  ·  Current"
             button=SidebarRouteButton(label,stop_id=stop['id'],drag_scope=self._route_drag_scope);button.reorder_requested.connect(self._drop_stop);button.setCheckable(True);button.setChecked(stop["id"]==current);button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            button.setProperty('horizontalRoute',True)
             button.setAccessibleName(f"Stop {index+1}, {stop['vessel_name_snapshot']}"+(", current stop" if stop["id"]==current else ""))
             button.setObjectName('routeStop');button.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Expanding);button.clicked.connect(lambda checked=False,identifier=stop["id"]:self._toggle_stop_id(identifier))
             button.setToolTip(label+'\nDrag to reorder. Click to select; click the current stop again to clear it. Use the arrow to move or remove this visit.')
@@ -644,10 +651,9 @@ class CargoTrackWindow(QMainWindow):
             earlier.triggered.connect(lambda _,i=index:self._move_stop(i,-1));later.triggered.connect(lambda _,i=index:self._move_stop(i,1));remove.triggered.connect(lambda _,identifier=stop["id"]:self.remove_stop(identifier))
             button.setMenu(menu);button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup);self.route_items.addWidget(button)
         self.route_summary.setText(f'Stops · {len(stops)}')
-        # Give long routes additional sidebar columns without hiding visits.
-        self.route_panel.setFixedWidth(self._route_sidebar_width())
         self._adapt_workbench()
         self.route_content.setVisible(bool(stops));self.route_hint.setVisible(not bool(stops))
+        self.route_scroll.setVisible(bool(stops))
         self.route_items.invalidate();self.route_content.updateGeometry()
         no_voyage=self.snapshot["current_voyage_id"] is None
         self.route_hint.setText("Create a voyage to add stops" if no_voyage else "No vessels in this voyage" if not stops else "Open a stop menu to move or remove")
@@ -760,6 +766,13 @@ class CargoTrackWindow(QMainWindow):
         else:self.order_column=column;self.descending=False
         self.page=0;self.table.horizontalHeader().setSortIndicator(column,Qt.SortOrder.DescendingOrder if self.descending else Qt.SortOrder.AscendingOrder);self._request_table()
 
+    def _selection_rows_changed(self,selected,deselected):
+        if getattr(self,'_selection_reset',False):return
+        rows=self.table.selectionModel().selectedRows()
+        current=self.table.currentIndex()
+        if rows and (not current.isValid() or current.row()!=rows[0].row()):
+            self.table.setCurrentIndex(rows[0])
+
     def _selection_changed(self,current,*_):
         if getattr(self,"_selection_reset",False):return
         if not current.isValid():self.selected_no=None;self._update_selected_actions();return
@@ -780,7 +793,7 @@ class CargoTrackWindow(QMainWindow):
         self.deliver_button.setEnabled(active and row['status']=='On Board')
         self.add_button.setEnabled(not self._busy)
         for widget in (self.pickup_button,self.deliver_button,self.add_button):
-            widget.setObjectName('primaryButton' if widget.isEnabled() and widget in (self.pickup_button,self.deliver_button) else '')
+            widget.setObjectName('primaryButton' if widget is self.add_button or widget.isEnabled() and widget in (self.pickup_button,self.deliver_button) else '')
             widget.style().unpolish(widget);widget.style().polish(widget)
         self.more_menu.clear()
         if row and row["is_void"]:
@@ -963,7 +976,8 @@ class CargoTrackWindow(QMainWindow):
         if not action_is_current:
             endpoint=row["from_name"] if operation=="pick_up" else row["to_name"]
             noun="picked up" if operation=="pick_up" else "delivered"
-            if not confirm(self,"Confirm physical location?",f"Confirm that this cargo was {noun} at {endpoint}?","This updates the recorded cargo location."):return
+            action='Confirm pickup' if operation=='pick_up' else 'Confirm delivery'
+            if not confirm(self,action,f"Confirm that this cargo was {noun} at {endpoint}?","This updates the recorded cargo location.",(('Cargo',row.get('description','')),('Location',endpoint)),action):return
             payload["confirmed_location"]=True
         self._submit(operation,payload,"Transfer updated.")
 
@@ -1046,8 +1060,7 @@ class CargoTrackWindow(QMainWindow):
         self._send("_restore",{"path":preview["path"]},meta={"kind":"restore"})
 
     def export_file(self):
-        mode=QMessageBox.question(self,"Export transfers",f"Export the full set matching this view and its filters?\n\n{self.result_label.text()}",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.Cancel)
-        if mode!=QMessageBox.StandardButton.Yes:return
+        if not confirm(self,"Export transfers",f"Export the full set matching this view and its filters?\n\n{self.result_label.text()}"):return
         file_type,ok=QInputDialog.getItem(self,"Export format","File format",["Excel workbook (.xlsx)","CSV (.csv)"],0,False)
         if not ok:return
         fmt="xlsx" if file_type.startswith("Excel") else "csv";extension="xlsx" if fmt=="xlsx" else "csv"
@@ -1125,11 +1138,11 @@ class SettingsDialog(AppDialog):
             field.setReadOnly(True);field.setCursorPosition(0);field.setToolTip(field.text());field.setAccessibleName(label);row=QHBoxLayout();row.addWidget(field,1);choose=QPushButton("Choose…");choose.setAccessibleName("Choose "+label.lower());choose.clicked.connect(lambda _,f=field,l=label:self.choose_directory(f,l));row.addWidget(choose);form.addRow(label,row)
         root.addLayout(form)
         note=QLabel("Changing the database folder copies the current ledger safely. The original file stays as a safety copy. Existing databases are never overwritten.");note.setWordWrap(True);root.addWidget(note)
-        self.theme=QComboBox();self.theme.setAccessibleName("Appearance mode");self.theme.addItem("Light","light");self.theme.addItem("Dark","dark");self.theme.setCurrentIndex(self.theme.findData("dark" if is_dark_mode() else "light"));form.addRow("Appearance",self.theme)
+        self.theme=QComboBox();self.theme.addItem("Light","light");self.theme.addItem("Dark","dark");self.theme.setCurrentIndex(self.theme.findData("dark" if is_dark_mode() else "light"))
         self.font_size=QComboBox();self.font_size.setAccessibleName("Interface font size")
         for size,label in ((10,"Compact · 10 pt"),(11,"Standard · 11 pt"),(12,"Large · 12 pt")):self.font_size.addItem(label,size)
         self.font_size.setCurrentIndex(self.font_size.findData(application_font_size()));form.addRow("Font size",self.font_size)
-        self.font_label=QLabel("Font: Inter · bundled with MarineOps");root.addWidget(self.font_label)
+        self.font_label=QLabel("Font: Manrope · bundled with MarineOps");root.addWidget(self.font_label)
         root.addStretch(1);buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel|QDialogButtonBox.StandardButton.Save);buttons.addButton("Help",QDialogButtonBox.ButtonRole.HelpRole).clicked.connect(lambda:host.open_help("settings"));buttons.accepted.connect(self.validate_and_accept);buttons.rejected.connect(self.reject);root.addWidget(buttons)
     def choose_directory(self,field,label):
         path=QFileDialog.getExistingDirectory(self,"Choose "+label.lower(),field.text())
@@ -1156,5 +1169,5 @@ class HelpDialog(AppDialog):
         super().__init__(parent);self.setWindowTitle("MarineOps Help");self.resize(760,650)
         root=QVBoxLayout(self);self.browser=QTextBrowser();self.browser.setAccessibleName("MarineOps user guide");self.browser.setOpenExternalLinks(False)
         self.browser.document().setDefaultStyleSheet("a { color: " + themed_color("#0066CC", "#A6D0FF") + "; }")
-        self.browser.setHtml((asset_path("cargo-track.ico").parent.parent/"help/user-guide.html").read_text(encoding="utf-8"));self.browser.document().setDefaultFont(QApplication.font());root.addWidget(self.browser)
+        self.browser.setHtml((asset_path("marineops.ico").parent.parent/"help/user-guide.html").read_text(encoding="utf-8"));self.browser.document().setDefaultFont(QApplication.font());root.addWidget(self.browser)
         close=QPushButton("Close");close.clicked.connect(self.accept);root.addWidget(close);QTimer.singleShot(0,lambda:self.browser.scrollToAnchor(section))

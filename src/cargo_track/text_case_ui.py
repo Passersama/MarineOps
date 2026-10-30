@@ -4,9 +4,10 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QDialogBut
     QHeaderView, QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QTextEdit)
 from .appearance import fit_to_screen
 from .text_case import normalize
+from .dialogs import GlassDialog
 
 
-class CasePreviewDialog(QDialog):
+class CasePreviewDialog(GlassDialog):
     def __init__(self, proposals, parent=None):
         super().__init__(parent)
         self.proposals = proposals

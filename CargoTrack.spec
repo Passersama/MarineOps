@@ -11,7 +11,8 @@ binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
 datas += [("assets/branding/chevron.svg", "assets/branding"), ("assets/branding/chevron-disabled.svg", "assets/branding")]
-datas += [("assets/fonts/Inter-Regular.ttf", "assets/fonts"), ("assets/fonts/Inter-SemiBold.ttf", "assets/fonts"), ("assets/fonts/Inter-OFL.txt", "assets/fonts")]
+datas += [("assets/fonts/Manrope-Variable.ttf", "assets/fonts"), ("assets/fonts/Manrope-OFL.txt", "assets/fonts")]
+datas += [("assets/branding/paper-dark.png", "assets/branding"), ("assets/branding/paper-light.png", "assets/branding")]
 datas += [("assets/branding/chevron-dark.svg", "assets/branding"), ("assets/branding/chevron-disabled-dark.svg", "assets/branding")]
 datas += [("assets/help/user-guide.html", "assets/help")]
 a = Analysis(

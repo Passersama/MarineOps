@@ -4,9 +4,10 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout
 from . import __version__
 from .brand import PRODUCT_NAME, PRODUCT_DESCRIPTION
 from .appearance import brand_pixmap
+from .dialogs import GlassDialog
 
 
-class AboutDialog(QDialog):
+class AboutDialog(GlassDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('About MarineOps')

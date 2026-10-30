@@ -84,13 +84,13 @@ class SidebarRouteButton(RouteButton):
         else:event.ignore()
     def dragMoveEvent(self,event):
         if self._drag_stop(event) is None:event.ignore();return
-        self._drop_after=event.position().y()>=self.height()/2;self.update();event.setDropAction(Qt.DropAction.MoveAction);event.accept()
+        self._drop_after=(event.position().x()>=self.width()/2 if self.property('horizontalRoute') else event.position().y()>=self.height()/2);self.update();event.setDropAction(Qt.DropAction.MoveAction);event.accept()
     def dragLeaveEvent(self,event):
         self._drop_after=None;self.update();event.accept()
     def dropEvent(self,event):
         identifier=self._drag_stop(event);self._drop_after=None;self.update()
         if identifier is None:event.ignore();return
-        after=event.position().y()>=self.height()/2
+        after=(event.position().x()>=self.width()/2 if self.property('horizontalRoute') else event.position().y()>=self.height()/2)
         event.setDropAction(Qt.DropAction.MoveAction);event.accept();self.reorder_requested.emit(identifier,self.stop_id,after)
     def minimumSizeHint(self):return QSize(60,24)
     def paintEvent(self,event):
@@ -100,8 +100,11 @@ class SidebarRouteButton(RouteButton):
         painter.setPen(self.palette().windowText().color())
         painter.drawText(self.rect().adjusted(12,2,-28,-2),Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter,self.text())
         if self._drop_after is not None:
-            painter.setPen(QPen(self.palette().highlight().color(),3));y=self.height()-2 if self._drop_after else 1
-            painter.drawLine(2,y,self.width()-2,y)
+            painter.setPen(QPen(self.palette().highlight().color(),3))
+            if self.property('horizontalRoute'):
+                x=self.width()-2 if self._drop_after else 1; painter.drawLine(x,2,x,self.height()-2)
+            else:
+                y=self.height()-2 if self._drop_after else 1; painter.drawLine(2,y,self.width()-2,y)
 
 
 class SidebarRouteLayout(RouteLayout):

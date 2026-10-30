@@ -9,8 +9,8 @@ using System.Drawing;
 
 [assembly: AssemblyTitle("MarineOps Setup")]
 [assembly: AssemblyProduct("MarineOps")]
-[assembly: AssemblyVersion("1.2.6.0")]
-[assembly: AssemblyFileVersion("1.2.6.0")]
+[assembly: AssemblyVersion("1.2.11.0")]
+[assembly: AssemblyFileVersion("1.2.11.0")]
 
 internal static class Installer
 {
@@ -47,7 +47,6 @@ internal static class Installer
                     noLaunch = !options.LaunchAfterInstall;
                 }
             }
-            string sourceZip = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MarineOps-1.2.6-Windows-x64.zip");
             string fullTarget = Path.GetFullPath(installDir);
             ValidateInstallTarget(fullTarget);
             string parent = Path.GetDirectoryName(fullTarget);
@@ -56,7 +55,9 @@ internal static class Installer
             Directory.CreateDirectory(stage);
             try
             {
-                using (Stream fs = Assembly.GetExecutingAssembly().GetManifestResourceStream("CargoTrackPayload") ?? File.OpenRead(sourceZip))
+                Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("CargoTrackPayload");
+                if (payload == null) throw new InvalidDataException("The installer payload is missing.");
+                using (Stream fs = payload)
                 using (ZipArchive archive = new ZipArchive(fs, ZipArchiveMode.Read))
                 {
                     foreach (ZipArchiveEntry entry in archive.Entries)
@@ -210,7 +211,7 @@ internal sealed class InstallOptions : Form
         ClientSize = new Size(620, 280);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false; StartPosition = FormStartPosition.CenterScreen;
-        Label heading = new Label { Text = "Install MarineOps 1.2.6", AutoSize = true, Location = new Point(24, 20), Font = new Font(Font, FontStyle.Bold) };
+        Label heading = new Label { Text = "Install MarineOps 1.2.11", AutoSize = true, Location = new Point(24, 20), Font = new Font(Font, FontStyle.Bold) };
         Label label = new Label { Text = "Installation folder", AutoSize = true, Location = new Point(24, 60) };
         PathInput.Text = initialPath; PathInput.SetBounds(24, 88, 450, 30); PathInput.AccessibleName = "Installation folder";
         Button browse = new Button { Text = "Browse…", Location = new Point(484, 86), Size = new Size(112, 34) };

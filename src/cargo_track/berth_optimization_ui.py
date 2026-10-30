@@ -13,6 +13,7 @@ from .berth_optimization_validation import validate_route
 from .berth_plan import task_key, plan_assignments
 from .personnel_cargo import read_cargo, dependency_spec, dependency_hash
 from .personnel_import import PersonnelError, digest
+from .dialogs import GlassDialog
 
 
 class PlanningSignals(QObject):
@@ -66,7 +67,7 @@ def restore_editor(builder, state):
     builder.changed(preserve_optimization=True)
 
 
-class OptimizationDialog(QDialog):
+class OptimizationDialog(GlassDialog):
     def __init__(self, builder):
         super().__init__(builder);self.builder = builder;self.job = None;self.result = None;self.problem = None
         self.accepted_result = None;self.revision = builder.editor_revision
@@ -107,15 +108,16 @@ class OptimizationDialog(QDialog):
         self.preview.clear();self.notice.setText('Options changed. Calculate again to review the route.')
 
     def start(self):
+        if not self.builder.owner._action_prepared:return self.builder.owner.prepare_action(self.start)
         if self.job:return
         builder = self.builder
         try:
-            builder.owner.service.assert_context(self.context)
+            builder.owner.read_model.assert_context(self.context)
             if builder.editor_revision != self.revision:raise PersonnelError('The editor changed. Reopen automatic planning.')
             materials = [self.materials.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.materials.count())
                          if self.materials.item(i).checkState() == Qt.CheckState.Checked]
             self.dependencies = dependency_spec(self.source, builder.crew, [int(t['id']) for t in materials])
-            live = read_cargo(builder.owner.host.database_path, selected_cargo=self.dependencies['cargo_ids'])
+            live = builder.owner.source
             if dependency_hash(live, self.dependencies) != dependency_hash(self.source, self.dependencies):
                 raise PersonnelError('Cargo changed. Refresh the plan editor before calculating.')
             excluded = {k for k, v in builder.selection_overrides.items() if v is False}
@@ -173,10 +175,11 @@ class OptimizationDialog(QDialog):
         self.preview.setPlainText('\n'.join(lines));self.notice.setText('Minimum calls proved' if result['status']=='OPTIMAL' else 'Complete candidate / minimum not proved');self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
 
     def use_result(self):
+        if not self.builder.owner._action_prepared:return self.builder.owner.prepare_action(self.use_result)
         try:
-            builder = self.builder;builder.owner.service.assert_context(self.context)
+            builder = self.builder;builder.owner.read_model.assert_context(self.context)
             if builder.editor_revision != self.revision:raise PersonnelError('The editor changed. Recalculate.')
-            live = read_cargo(builder.owner.host.database_path, selected_cargo=self.dependencies['cargo_ids'])
+            live = builder.owner.source
             if dependency_hash(live, self.dependencies) != dependency_hash(self.source, self.dependencies):
                 raise PersonnelError('Cargo changed. Refresh and recalculate.')
             check = validate_route(self.problem, self.applied_stops, self.applied_assignments)

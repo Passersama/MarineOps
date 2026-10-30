@@ -65,7 +65,8 @@ def main() -> int:
         if _activate_existing(server_name):
             if trace:print("Activated an existing instance",flush=True)
             return 0
-        QMessageBox.critical(None, "MarineOps", "Another MarineOps window is already running.")
+        from .dialogs import prompt
+        prompt(None, "MarineOps", "Another MarineOps window is already running.", buttons=('OK',), default='OK')
         return 1
 
     server = QLocalServer()
@@ -73,7 +74,8 @@ def main() -> int:
         QLocalServer.removeServer(server_name)
         if not server.listen(server_name):
             if trace:print("Local activation server failed",flush=True)
-            QMessageBox.critical(None, "MarineOps", "Another MarineOps window is already running.")
+            from .dialogs import prompt
+            prompt(None, "MarineOps", "Another MarineOps window is already running.", buttons=('OK',), default='OK')
             instance_lock.unlock()
             return 1
 

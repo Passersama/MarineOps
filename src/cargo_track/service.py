@@ -37,8 +37,22 @@ class ApplicationService:
         self.connection=None
         self.repository=None
         self.dataset_epoch=str(uuid4())
+        self.recovery_marker=self.path.with_name(self.path.name+'.recovery-required.json')
+        self._restore_in_progress=False
 
     def open(self):
+        if not self._restore_in_progress:
+            if self.recovery_marker.exists():
+                try:recovery=json.loads(self.recovery_marker.read_text(encoding='utf-8'))
+                except (OSError,ValueError):recovery={}
+                raise AppError('RESTORE_RECOVERY_REQUIRED',
+                    'Cargo recovery is required. Preserve the listed copies and recover the ledger before reopening. '
+                    'Remove the recovery record only after recovery: '+str(self.recovery_marker),recovery)
+            if not self.path.exists():
+                leftovers=list(self.path.parent.glob('.'+self.path.name+'.*.rollback'))
+                if leftovers:
+                    raise AppError('RESTORE_RECOVERY_REQUIRED','An interrupted Cargo restore was found. Recover the previous ledger before reopening.',
+                                   {'previous_ledger':str(leftovers[0]),'current_path':str(self.path)})
         self.connection=connect(str(self.path))
         try:
             initialize(self.connection)
@@ -804,6 +818,32 @@ class ApplicationService:
             self._remove_temporary(prepared)
             if isinstance(exc,AppError):raise
             raise AppError("RESTORE_PREPARE_FAILED","The restore could not be prepared. The current ledger is unchanged.",{"detail":str(exc),"safety_copy":str(safety)}) from exc
+        recovery={'safety_copy':str(safety.resolve()),'previous_ledger':str(old.resolve()),
+                  'prepared_backup':str(prepared.resolve()),'current_path':str(self.path.resolve())}
+        marker_temp=self.recovery_marker.with_name(self.recovery_marker.name+'.'+uuid4().hex+'.tmp')
+        try:
+            # Commit the recovery instruction before the first destructive rename.
+            with marker_temp.open('x',encoding='utf-8') as stream:
+                stream.write(_json(recovery));stream.flush();os.fsync(stream.fileno())
+            os.replace(marker_temp,self.recovery_marker)
+        except OSError as exc:
+            self._remove_temporary(marker_temp);self._remove_temporary(prepared)
+            raise AppError('RESTORE_PREPARE_FAILED','Could not save the Cargo recovery record. The current ledger is unchanged.',
+                           {'detail':str(exc),'safety_copy':str(safety)}) from exc
+        self._restore_in_progress=True
+        try:
+            return self._replace_restored_ledger(prepared,old,safety,preview)
+        finally:
+            self._restore_in_progress=False
+
+    def _clear_recovery_record(self,recovery):
+        try:self.recovery_marker.unlink()
+        except OSError as exc:
+            self.close()
+            raise AppError('RESTORE_RECOVERY_REQUIRED','Cargo is preserved, but its recovery record could not be cleared. Recover before reopening.',
+                           {**recovery,'detail':str(exc)}) from exc
+
+    def _replace_restored_ledger(self,prepared,old,safety,preview):
         self.close();moved=False
         try:
             os.replace(self.path,old);moved=True;os.replace(prepared,self.path);self.open()
@@ -819,7 +859,9 @@ class ApplicationService:
                     "The restore and automatic rollback both failed. Data copies were preserved; close MarineOps and recover the previous ledger from the listed files.",
                     {"detail":str(exc),"recovery_error":str(recovery_error),"safety_copy":str(safety),"previous_ledger":str(old if moved and old.exists() else self.path),"prepared_backup":str(prepared),"current_path":str(self.path)}) from recovery_error
             self._remove_temporary(prepared)
+            self._clear_recovery_record({'safety_copy':str(safety),'current_path':str(self.path)})
             raise AppError("RESTORE_FAILED","The restore failed. The previous ledger was reopened.",{"detail":str(exc),"safety_copy":str(safety)}) from exc
+        self._clear_recovery_record({'safety_copy':str(safety),'current_path':str(self.path)})
         removed=self._remove_temporary(old);self.dataset_epoch=str(uuid4());workspace_files.invalidate(self.path)
         return {"counts":preview["counts"],"safety_copy":str(safety),"restored_from":preview["path"],"revision":self._revision(),"retained_rollback":None if removed else str(old)}
 

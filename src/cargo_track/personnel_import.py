@@ -7,10 +7,12 @@ import re
 from datetime import date, datetime
 from pathlib import Path
 from itertools import islice
+from contextlib import contextmanager
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from .text_case import normalize, personnel_record
+from .xlsx_safety import workbook_snapshot, WorkbookInputError
 
 
 class PersonnelError(ValueError):
@@ -85,21 +87,26 @@ def header_field(value):
     return None
 
 
-def workbook_sheets(path):
-    book = load_workbook(path, read_only=True, data_only=True)
+@contextmanager
+def _open_workbook(path, *, data_only):
     try:
+        with workbook_snapshot(path) as (frozen, file_hash):
+            book = load_workbook(frozen, read_only=True, data_only=data_only)
+            try:yield book, file_hash
+            finally:book.close()
+    except WorkbookInputError as exc:
+        raise PersonnelError(str(exc)) from exc
+
+
+def workbook_sheets(path):
+    with _open_workbook(path, data_only=True) as (book, _):
         return book.sheetnames
-    finally:
-        book.close()
 
 
 def read_personnel_excel(path, sheet_name=None, mapping=None, header_row=None):
     """Return whitelisted records only. Mapping values are 1-based column numbers."""
     path = Path(path)
-    if path.suffix.casefold() != ".xlsx":
-        raise PersonnelError("Choose an Excel workbook (.xlsx).")
-    book = load_workbook(path, read_only=True, data_only=False)
-    try:
+    with _open_workbook(path, data_only=False) as (book, file_hash):
         sheet = book[sheet_name] if sheet_name else book.active
         if (sheet.max_row or 0) > 20000 or (sheet.max_column or 0) > 200:
             raise PersonnelError("This workbook is too large. Use a sheet with at most 20,000 rows and 200 columns.")
@@ -169,11 +176,7 @@ def read_personnel_excel(path, sheet_name=None, mapping=None, header_row=None):
             raise PersonnelError("No personnel records were found in this sheet.")
         canonical = [{f: r.get(f, "") for f in ("name", "position", "nationality", "vessel", "from_name",
                       "to_name", "date", "direction", "comment", "task_id")} for r in result]
-        with path.open('rb') as stream:
-            file_hash=hashlib.file_digest(stream,'sha256').hexdigest()
         return {"file_name": path.name, "file_hash": file_hash,
                 "content_hash": digest(canonical), "sheet": sheet.title, "header_row": header,
                 "parser_version":1,"mapping_hash":digest({'header':header,'blocks':blocks}),
                 "blocks": blocks, "records": result}
-    finally:
-        book.close()

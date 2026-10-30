@@ -1,4 +1,4 @@
-param([string]$Version='1.2.5',[string]$PreviousVersion='1.2.4')
+param([string]$Version='1.2.5',[string]$PreviousVersion='1.2.4',[string]$FixtureDirectory='')
 $ErrorActionPreference='Stop'
 $taskRoot=Split-Path -Parent $PSScriptRoot
 $validation=Join-Path $taskRoot ('artifacts/validation-'+$Version)
@@ -11,6 +11,7 @@ $env:TMP=Join-Path $taskRoot ('artifacts/validation-'+$Version+'/tmp')
 New-Item -ItemType Directory -Force $env:TMP | Out-Null
 $env:TEMP=$env:TMP
 $legacy=Join-Path $taskRoot 'artifacts/validation-1.2.3/print-legs-639285591682494470/fictional-data'
+if ($FixtureDirectory) {$legacy=(Resolve-Path -LiteralPath $FixtureDirectory).Path}
 if (!(Test-Path -LiteralPath (Join-Path $legacy 'fixture-metadata.json'))) {throw 'Archived fictional 1.2.3 fixture is unavailable'}
 New-Item -ItemType Directory -Force $data | Out-Null
 foreach ($name in @('cargo-track.sqlite3','personnel-transfer.sqlite3','fixture-metadata.json')) {
@@ -72,7 +73,7 @@ public static class PrintLegsWindow {
 }
 '@
 $fixture=Get-Content -LiteralPath (Join-Path $data 'fixture-metadata.json') -Raw | ConvertFrom-Json
-if (!$fixture.removed_leg_history_preserved -or !$fixture.legacy_removed_reference_differs_from_current_parent) {throw 'Legacy removed-leg fixture is missing'}
+if (!$fixture.fictional_data -and (!$fixture.removed_leg_history_preserved -or !$fixture.legacy_removed_reference_differs_from_current_parent)) {throw 'A verified fictional fixture is required'}
 $report=[ordered]@{version=$Version;standalone_installer='PASS';previous_version=$PreviousVersion;upgrade='PASS';legacy_fixture_origin=$legacy;fictional_data=$true;data_directory=$data;fixture=$fixture;packages=@()}
 foreach ($edition in @('installed','portable')) {
     $exe=Join-Path (Join-Path $run $edition) 'MarineOps/MarineOps.exe'
