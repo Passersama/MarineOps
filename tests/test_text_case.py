@@ -85,6 +85,9 @@ class TextCaseFlow(unittest.TestCase):
         preview=self.service.import_preview(parsed,self.snapshot,self.plan)
         self.service.commit_import(preview)
         with self.assertRaises(PersonnelError):self.service.import_preview(parsed,self.snapshot,self.plan)
+        port=self.command('add_stop',{'vessel_id':self.shore})['stop_id']
+        self.command('reorder_stops',{'stop_ids':[port]+[s['id'] for s in self.snapshot['stops']]})
+        self.snapshot=read_cargo(self.cargo.path)
         crew=self.service.crew_records(self.plan,self.snapshot)
         self.assertEqual('Jordan Lee',crew[0]['name'])
         self.assertEqual('NAV QC',crew[0]['position'])

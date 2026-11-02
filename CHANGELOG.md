@@ -1,5 +1,51 @@
 # Release history
 
+## 1.2.21
+
+- Align Dashboard and Personnel content with the sidebar bottom and keep Personnel status and progress inside its panel.
+
+## 1.2.20
+
+- Remove the Cargo footer count and extend the table to the sidebar bottom, retaining pagination for multi-page results.
+
+## 1.2.19
+
+- Keep the shared status bar space stable and align the Dashboard content bottom with Cargo and Personnel.
+
+## 1.2.18
+
+- Keep the Dashboard voyage route expanded and give the Cargo and Personnel panels independent scrolling when space is limited. Group current visit details and summaries more closely.
+
+## 1.2.17
+
+- Remove the two persistent explanatory notices from Dashboard while keeping actionable loading and error messages.
+
+## 1.2.16
+
+- Create a voyage with an ordered list of vessel and port visits, including repeat visits. Reorder or remove visits before saving.
+- Save the new voyage and its visits atomically; reject a stale creation if the workspace changed while the dialog was open.
+
+## 1.2.15
+
+- Complete a voyage without starting another; retain the route and unfinished cargo.
+- Clear the default crew-list selection when there is no active voyage.
+- Allow individual visit-order locks in Auto plan and exclude the configured transfer vessel as a stop.
+
+## 1.2.14
+
+- Report successful installation separately from shortcut, launch, and old-file cleanup warnings.
+- Explain migration from historical automatic-port plans to actual Voyage port visits.
+
+## 1.2.13
+
+- Refresh the installer with continuous progress, in-window completion and error states.
+
+## 1.2.12
+
+- Add repeatable port calls to Voyage; berth plans use explicit calls instead of an automatic terminal port.
+- Require actual port-to-vessel Sign-on and vessel-to-port Sign-off actions and include waiting port-origin cargo in automatic route planning.
+- Allow valid XLSX workbooks containing binary printer settings through bounded package checks.
+
 ## 1.2.11
 
 - Replace system prompts with silent themed dialogs; show cargo and location in pickup and delivery confirmations.

@@ -17,6 +17,19 @@ from cargo_track.personnel_models import ModelTable
 from cargo_track.theme_tokens import LIGHT,DARK,render_style
 
 class FrontendTests(unittest.TestCase):
+    def test_completed_voyage_clears_crew_selection_but_history_is_selectable(self):
+        voyage = self.page.source['voyage_id']
+        self.f.command('complete_voyage', {'voyage_id': voyage})
+        self.page.refresh_source()
+        self.wait(lambda: self.page.source and self.page.source['voyage_id'] is None)
+        self.assertIsNone(self.page.plan_combo.currentData())
+        self.assertEqual('No active crew list', self.page.plan_combo.currentText())
+        self.assertEqual(0, self.page.crew_filter.rowCount())
+        self.page.plan_combo.setCurrentIndex(self.page.plan_combo.findData(self.f.plan))
+        self.wait(lambda: self.page.plan_combo.currentData() == self.f.plan)
+        self.assertGreater(self.page.crew_filter.rowCount(), 0)
+        self.assertEqual([], self.errors)
+
     def test_rename_keeps_dirty_draft_and_selected_list(self):
         editor=self.draft();context=self.page.service.context(self.f.plan)
         with patch('cargo_track.personnel_ui.QInputDialog.getText',return_value=('Renamed crew list',True)):
@@ -70,11 +83,11 @@ class FrontendTests(unittest.TestCase):
 
     def test_port_is_addable_removable_and_not_forced(self):
         editor=self.draft()
-        self.assertFalse(any(editor.route.item(i).data(Qt.ItemDataRole.UserRole)['vessel_id']==self.f.shore for i in range(editor.route.count())))
+        self.assertEqual(1, sum(editor.route.item(i).data(Qt.ItemDataRole.UserRole)['vessel_id']==self.f.shore for i in range(editor.route.count())))
         editor.vessels.setCurrentIndex(editor.vessels.findData(self.f.shore));editor.add_stop()
         self.assertEqual(self.f.shore,editor.build()['stops'][-1]['vessel_id'])
         editor.route.setCurrentRow(editor.route.count()-1);editor.remove_stop()
-        self.assertFalse(any(s['vessel_id']==self.f.shore for s in editor.build()['stops']))
+        self.assertEqual(1, sum(s['vessel_id']==self.f.shore for s in editor.build()['stops']))
 
     def test_next_leg_action_saves_same_person_and_assigns_later_visit(self):
         editor=self.draft();editor.rows.selectRow(0)
@@ -101,7 +114,7 @@ class FrontendTests(unittest.TestCase):
         second = service.add_passenger(self.f.plan, record('Niger', 'INN'))
         editor = self.draft()
         editor.append_stop({'id':'plan:return-niger','vessel_id':self.f.b,'vessel_name_snapshot':'Niger'})
-        visit = editor.route.takeItem(editor.route.count()-1);editor.route.insertItem(2,visit)
+        visit = editor.route.takeItem(editor.route.count()-1);editor.route.insertItem(3,visit)
         editor.refresh_assignments()
         rows = {task['id']: i for i, task in enumerate(editor.tasks)}
         editor.rows.clearSelection()
@@ -145,6 +158,7 @@ class FrontendTests(unittest.TestCase):
 
     def setUp(self):
         self.f=fixtures.PersonnelTests();self.f.setUp()
+        self.f.add_port_calls(departure=True)
         self.f.passenger(name='Alex Fictional');self.f.passenger(name='Sam Fictional')
         self.plan=self.f.generate(mode='Final')
         self.other=self.f.service.create_plan('Other crew','2026-10-06')

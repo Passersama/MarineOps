@@ -37,6 +37,11 @@ def read_cargo_summary(path):
         stops = [dict(r) for r in db.execute(
             'SELECT * FROM voyage_stops WHERE voyage_id=? AND removed=0 ORDER BY position,id',
             (state['current_voyage_id'],))]
+        port = db.execute("SELECT id,name FROM locations WHERE kind='SHORE'").fetchone()
+        if port:
+            for stop in stops:
+                if stop['vessel_id'] == port['id']:
+                    stop['vessel_name_snapshot'] = port['name']
         current = next((s for s in stops if s['id'] == state['current_stop_id']), None)
         settings = dict(db.execute('SELECT key,value FROM settings'))
         counts = {'Waiting': 0, 'On Board': 0, 'Done': 0}

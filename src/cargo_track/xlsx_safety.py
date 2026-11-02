@@ -44,7 +44,8 @@ class _XMLTarget:
         if local == 'si':self.budget.strings += 1
         if self.depth > 64 or self.budget.nodes > MAX_XML_NODES or self.budget.strings > MAX_SHARED_STRINGS:
             _limit()
-        if self.manifest and 'xml' in attributes.get('ContentType', '').lower():
+        content_type = attributes.get('ContentType', '').lower().split(';', 1)[0].strip()
+        if self.manifest and (content_type.endswith('+xml') or content_type.endswith('/xml')):
             if local == 'Override':
                 part = attributes.get('PartName', '')
                 if not part.startswith('/') or part.startswith('//'):

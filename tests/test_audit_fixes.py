@@ -46,6 +46,7 @@ class AuditFixTests(unittest.TestCase):
     def setUp(self):
         self.f=fixtures.PersonnelTests()
         self.f.setUp()
+        self.f.add_port_calls(departure=True)
         self.owner=Owner(self.f)
         self.builders=[]
 

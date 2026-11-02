@@ -267,7 +267,12 @@ class PersonnelRouteTests(unittest.TestCase):
 
     def test_legacy_complete_snapshot_remains_immutable_and_exportable(self):
         self.add('CHA','Niger')
-        saved = self.service.save_berth(self.f.generate(), True);frozen=copy.deepcopy(saved)
+        legacy = self.f.generate()
+        legacy['output_contract_version'] = 1
+        legacy['stops'].append({'id':'PORT', 'number':len(legacy['stops']) + 1, 'name':'xx port',
+                                'vessel_id':self.f.shore, 'pick_passengers':[], 'drop_passengers':[],
+                                'pick_materials':[], 'drop_materials':[]})
+        saved = self.service.save_berth(legacy, True);frozen=copy.deepcopy(saved)
         export_plan(saved, self.f.root / 'legacy.xlsx')
         self.assertEqual('PORT', saved['stops'][-1]['id'])
         self.assertEqual(frozen, self.service.berth_versions()[0])

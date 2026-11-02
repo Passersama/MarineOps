@@ -34,6 +34,7 @@ class WorkspaceManagementTests(unittest.TestCase):
         self.assertEqual(self.f.s2,read_cargo(self.f.cargo_path)['current_stop_id'])
 
     def test_rename_keeps_ids_personnel_and_saved_snapshots(self):
+        self.f.add_port_calls(departure=True)
         self.f.passenger();snapshot=self.f.service.save_berth(self.f.generate(mode='Final'),True)
         records=copy.deepcopy(self.f.service.passengers(self.f.plan))
         old=next(p for p in self.f.service.plans() if p['id']==self.f.plan)['name']

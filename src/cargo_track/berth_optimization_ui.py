@@ -13,6 +13,8 @@ from .berth_optimization_validation import validate_route
 from .berth_plan import task_key, plan_assignments
 from .personnel_cargo import read_cargo, dependency_spec, dependency_hash
 from .personnel_import import PersonnelError, digest
+from .personnel_import import key as name_key
+from .personnel_routes import transfer_name
 from .dialogs import GlassDialog
 
 
@@ -76,7 +78,18 @@ class OptimizationDialog(GlassDialog):
         self.setWindowTitle('Automatic berthing plan');self.resize(780, 650)
         layout = QVBoxLayout(self)
         info = QLabel('Complete every included passenger leg and selected material transfer. Each actual vessel call counts once, including return visits. Port calls break ties.');info.setWordWrap(True);layout.addWidget(info)
-        self.keep = QCheckBox('Keep manually added / retained calls in their current relative order');self.keep.setChecked(True);layout.addWidget(self.keep)
+        layout.addWidget(QLabel('Lock selected calls in their current relative order (leave all unchecked for automatic ordering):'))
+        self.order_locks = QListWidget();self.order_locks.setMaximumHeight(120);layout.addWidget(self.order_locks)
+        transfer = name_key(transfer_name(self.source))
+        locations = {r['id']: r for r in self.source['locations']}
+        for stop in self.original['route']:
+            location = locations.get(stop['vessel_id'], {})
+            if location.get('kind') != 'SHORE' and transfer and name_key(location.get('name')) == transfer:
+                continue
+            item = QListWidgetItem(stop['vessel_name_snapshot'])
+            item.setData(Qt.ItemDataRole.UserRole, stop['id'])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked);self.order_locks.addItem(item)
         self.lock = QCheckBox('Keep current passenger and material pickup / drop assignments');layout.addWidget(self.lock)
         excluded = {k for k, v in builder.selection_overrides.items() if v is False}
         people = [t for t in builder.crew if task_key(t) not in excluded]
@@ -97,7 +110,7 @@ class OptimizationDialog(GlassDialog):
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Use this route');self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         self.buttons.accepted.connect(self.use_result);self.buttons.rejected.connect(self.reject);layout.addWidget(self.buttons)
-        self.keep.toggled.connect(self.invalidate);self.lock.toggled.connect(self.invalidate);self.materials.itemChanged.connect(self.invalidate)
+        self.order_locks.itemChanged.connect(self.invalidate);self.lock.toggled.connect(self.invalidate);self.materials.itemChanged.connect(self.invalidate)
         self.finished.connect(self.cancel)
 
     def cancel(self, *_):
@@ -129,12 +142,14 @@ class OptimizationDialog(GlassDialog):
                     mat_keys = {task_key(t) for t in materials}
                     locked.update({k: v for k, v in plan_assignments(builder.base_plan).items() if k in mat_keys})
             needed_pins = {visit for a in locked.values() for visit in a.values() if visit is not None}
+            needed_pins.update(self.order_locks.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.order_locks.count())
+                               if self.order_locks.item(i).checkState() == Qt.CheckState.Checked)
             route = self.original['route']
-            pins = [s for s in route if s['id'] in needed_pins or (self.keep.isChecked() and s.get('optimizer_keep'))]
+            pins = [s for s in route if s['id'] in needed_pins]
             self.problem = make_problem(self.source, builder.crew, materials, excluded=excluded, pins=pins, locked=locked,
                                         reference_order=[s['vessel_id'] for s in route])
             self.chosen_materials = materials
-            self.calculate.setEnabled(False);self.keep.setEnabled(False);self.lock.setEnabled(False);self.materials.setEnabled(False)
+            self.calculate.setEnabled(False);self.order_locks.setEnabled(False);self.lock.setEnabled(False);self.materials.setEnabled(False)
             self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False);self.notice.setText('Calculating… Cancel keeps the existing draft.')
             self.job = PlanningJob(self.problem);self.job.signals.done.connect(self.finished_calculation)
             self.job.signals.progress.connect(self.show_progress);QThreadPool.globalInstance().start(self.job)
@@ -144,7 +159,7 @@ class OptimizationDialog(GlassDialog):
         self.notice.setText(f"Calculating… {value['expanded_states']} states checked / {value['elapsed_ms'] / 1000:.1f}s")
 
     def finished_calculation(self, result):
-        self.job = None;self.calculate.setEnabled(True);self.keep.setEnabled(True);self.lock.setEnabled(True);self.materials.setEnabled(True)
+        self.job = None;self.calculate.setEnabled(True);self.order_locks.setEnabled(True);self.lock.setEnabled(True);self.materials.setEnabled(True)
         if not self.isVisible():return
         self.result = result
         if result['status'] not in {'OPTIMAL', 'FEASIBLE'}:

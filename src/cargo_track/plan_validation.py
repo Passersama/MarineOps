@@ -87,10 +87,14 @@ def validate_output_groups(plan):
         initial = (row.get('status') == 'On Board'
                    or (shore is not None and row.get('from_id') == shore)
                    or (row['kind'] == 'Passengers' and key(plan.get('transfer_vessel'))
+                       and (plan.get('output_contract_version', 0) < 2 or row.get('direction') not in ('Sign-on', 'Sign-off'))
                        and key(row.get('from_name')) == key(plan['transfer_vessel'])))
+        if (plan.get('output_contract_version', 0) >= 2 and row.get('from_id') == shore
+                and row.get('status') != 'On Board'):
+            initial = False
         if (plan['mode'] == 'Final' and row['kind'] == 'Passengers'
                 and row.get('from_id') == shore
-                and (plan.get('require_personnel_port_calls') or (ports and plan.get('output_contract_version')==1))):
+                and (plan.get('require_personnel_port_calls') or (ports and plan.get('output_contract_version', 0)>=1))):
             initial = False
         if not pick and not initial:
             errors.append(task + ': source pickup is missing')

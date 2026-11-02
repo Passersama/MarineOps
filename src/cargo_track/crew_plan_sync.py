@@ -15,12 +15,6 @@ def complete_crew_route(snapshot, people, *, departure=False):
     def insert(location, position):
         route.insert(position, {'id': 'plan:' + str(uuid4()), 'vessel_id': location,
                                 'vessel_name_snapshot': locations[location]['name']})
-    if departure and shore in locations and not any(s['vessel_id'] == shore for s in route) and any(
-            p.get('from_id') == shore and not p.get('previous_task_id') for p in people):
-        insert(shore, 0)
-    if shore in locations and not any(s['vessel_id'] == shore for s in route[1:]) and any(
-            p.get('to_id') == shore for p in people):
-        insert(shore, len(route))
     for person in sorted(people, key=leg_order):
         for side in ('from', 'to'):
             location = person.get(side + '_id')

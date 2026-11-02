@@ -167,7 +167,7 @@ class DashboardPage(QWidget):
         escape=QAction(self);escape.setShortcut(QKeySequence('Esc'));escape.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut);escape.triggered.connect(self.close_drawer);self.addAction(escape)
         help_action=QAction(self);help_action.setShortcut(QKeySequence('F1'));help_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut);help_action.triggered.connect(lambda:self.host.open_help('dashboard'));self.addAction(help_action)
     def _build(self):
-        root=QVBoxLayout(self);root.setContentsMargins(16,10,16,6);root.setSpacing(10)
+        root=QVBoxLayout(self);root.setContentsMargins(20,12,20,0);root.setSpacing(10)
         header=QHBoxLayout();self.navigation=WorkspaceNavigation('dashboard',self);header.addWidget(self.navigation)
         self.navigation.cargo_button.clicked.connect(self.host.show_cargo);self.navigation.personnel_button.clicked.connect(self.host.open_personnel)
         self.today=ElidedLabel();self.today.setObjectName('dashboardMuted')
@@ -177,14 +177,15 @@ class DashboardPage(QWidget):
         self.navigation.layout().removeWidget(self.navigation.about_button)
         header.addWidget(self.navigation.about_button)
         self.navigation.setMinimumWidth(self.navigation.sizeHint().width());root.addLayout(header)
-        self.scroll=QScrollArea();self.scroll.setObjectName('dashboardScroll');self.scroll.setWidgetResizable(True);self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);root.addWidget(self.scroll,1)
+        self.scroll=QScrollArea();self.scroll.setObjectName('dashboardScroll');self.scroll.setWidgetResizable(True);self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);self.scroll.setFrameShape(QFrame.Shape.NoFrame);root.addWidget(self.scroll,1)
         self.content=QWidget();self.content.setObjectName('dashboardContent');self.scroll.setWidget(self.content);body=QVBoxLayout(self.content);body.setContentsMargins(0,0,0,0);body.setSpacing(12)
         self.hero=surface();hero=QVBoxLayout(self.hero);hero.setContentsMargins(24,20,24,16);hero.setSpacing(15)
         title=QHBoxLayout();title.addWidget(label('Overview','dashboardTitle'));title.addSpacing(24);title.addWidget(label('Voyage','dashboardMuted'))
         self.voyage=label('Loading…',wrap=True);title.addWidget(self.voyage,1);title.addWidget(button('Voyages',self._open_voyages));title.addWidget(button('Refresh',self.refresh_from_source));hero.addLayout(title)
         self.briefing=QWidget();self.brief=QHBoxLayout(self.briefing);self.brief.setContentsMargins(0,0,0,0);self.brief.setSpacing(24)
         station=QVBoxLayout();self.station=label('Loading current stop…','dashboardStation',True);station.addWidget(self.station)
-        self.current=label('','dashboardCurrent',True);station.addWidget(self.current);station.addWidget(label('Manually selected. Personnel progress follows planned delivery visits.','dashboardMuted',True));station.addStretch();self.brief.addLayout(station,4)
+        self.current=label('','dashboardCurrent',True);station.addWidget(self.current)
+        self.summary_line=label('', 'dashboardMuted', True);station.addWidget(self.summary_line);station.addStretch();self.brief.addLayout(station,4)
         actions=QVBoxLayout();metrics=QHBoxLayout();self.pickups=label('0','dashboardMetric');self.deliveries=label('0','dashboardMetric')
         for metric,text in ((self.pickups,'ready to pick up'),(self.deliveries,'ready to deliver')):
             group=QVBoxLayout();metric.setAlignment(Qt.AlignmentFlag.AlignCenter);group.addWidget(metric);caption=label(text,'dashboardMuted');caption.setAlignment(Qt.AlignmentFlag.AlignCenter);group.addWidget(caption);metrics.addLayout(group)
@@ -206,7 +207,6 @@ class DashboardPage(QWidget):
         self.personnel_progress_note=label('Completed = drop visit before current visit.','dashboardMuted',True);personnel_summary.addWidget(self.personnel_progress_note)
         summaries.addLayout(personnel_summary,1);hero.addWidget(self.briefing)
         self.summary_details=QWidget();self.summary_details.setLayout(summaries);self.summary_details.hide()
-        self.summary_line=label('', 'dashboardMuted', True);hero.addWidget(self.summary_line)
         self.route_content=QWidget();self.route_items=RouteLayout(self.route_content);hero.insertWidget(1,self.route_content)
         self.route_empty=label('Select or create a voyage in Cargo to start.','dashboardMuted',True);hero.addWidget(self.route_empty);body.addWidget(self.hero)
         self.work=QWidget();self.work_layout=QHBoxLayout(self.work);self.work_layout.setContentsMargins(0,0,0,0);self.work_layout.setSpacing(12)
@@ -214,7 +214,7 @@ class DashboardPage(QWidget):
         line=QHBoxLayout();line.addWidget(label('Current stop cargo actions','dashboardHeading'));line.addStretch();self.cargo_all=button('View all',self.open_current,'dashboardLink');line.addWidget(self.cargo_all);c.addLayout(line)
         self.cargo_caption=label('','dashboardMuted');c.addWidget(self.cargo_caption)
         self.cargo_model=TableModel([('Cargo ID','cargo_tag'),('Description','description'),('From','from_name'),('To','to_name'),('Action','action'),('Status','status')],self)
-        self.cargo_table=table(self.cargo_model);self.cargo_table.setItemDelegateForColumn(5,StatusDelegate(self.cargo_table));self.cargo_table.setMinimumHeight(210)
+        self.cargo_table=table(self.cargo_model);self.cargo_table.setItemDelegateForColumn(5,StatusDelegate(self.cargo_table));self.cargo_table.setMinimumHeight(120)
         self.cargo_table.doubleClicked.connect(self.open_cargo_detail)
         for col,width in enumerate((104,160,150,150,88,95)):self.cargo_table.setColumnWidth(col,width)
         c.addWidget(self.cargo_table,1);self.cargo_empty=label('','dashboardMuted',True);c.addWidget(self.cargo_empty)
@@ -232,12 +232,18 @@ class DashboardPage(QWidget):
         crew_header=self.crew_table.horizontalHeader();crew_header.setStretchLastSection(False)
         for column in (0,1):crew_header.setSectionResizeMode(column,QHeaderView.ResizeMode.Stretch)
         crew_header.setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents)
-        self.crew_table.verticalHeader().setDefaultSectionSize(29);self.crew_table.setFixedHeight(210);self.crew_table.setAccessibleName('Current visit boarding and leaving personnel roster');p.addWidget(self.crew_table)
+        self.crew_table.verticalHeader().setDefaultSectionSize(29);self.crew_table.setMinimumHeight(120);self.crew_table.setAccessibleName('Current visit boarding and leaving personnel roster');p.addWidget(self.crew_table,1)
         footer=QHBoxLayout();self.full_list=button('View full list',self.open_drawer);footer.addWidget(self.full_list,1);footer.addWidget(button('Open Personnel',self.host.open_personnel,'dashboardLink'));p.addLayout(footer)
-        p.addStretch(1)
+        p.addStretch(0)
         self.personnel_panel.setMinimumWidth(355);self.cargo_panel.setMinimumWidth(0)
-        self.work_layout.addWidget(self.cargo_panel,7);self.work_layout.addWidget(self.personnel_panel,3);body.addWidget(self.work);body.addStretch()
-        self.notice=label('','dashboardNotice',True);root.addWidget(self.notice)
+        self.cargo_scroll=QScrollArea();self.personnel_scroll=QScrollArea()
+        for area,panel,name in ((self.cargo_scroll,self.cargo_panel,'Cargo actions'),(self.personnel_scroll,self.personnel_panel,'Current stop personnel')):
+            area.setAccessibleName(name);area.setFrameShape(QFrame.Shape.NoFrame);area.setWidgetResizable(True)
+            area.setMinimumSize(0,0);area.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Ignored);area.setWidget(panel)
+        self.personnel_scroll.setMinimumWidth(355)
+        self.work.setMinimumSize(0,0);self.work.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Ignored)
+        self.work_layout.addWidget(self.cargo_scroll,7);self.work_layout.addWidget(self.personnel_scroll,3);body.addWidget(self.work,1)
+        self.notice=label('','dashboardNotice',True);self.notice.hide();hero.addWidget(self.notice)
         self.overlay=QWidget(self);self.overlay.hide();self.shade=QPushButton(self.overlay);self.shade.setObjectName('dashboardShade');self.shade.setStyleSheet('background:rgba(15,25,42,80);border:0;border-radius:0;');self.shade.clicked.connect(self.close_drawer);self.shade.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.drawer=QFrame(self.overlay);self.drawer.setObjectName('dashboardDrawer');d=QVBoxLayout(self.drawer);d.setContentsMargins(24,20,24,20);d.setSpacing(12)
         header=QHBoxLayout();header.addWidget(label('Current stop personnel','dashboardHeading'),1);header.addWidget(button('Close',self.close_drawer));d.addLayout(header)
@@ -288,14 +294,14 @@ class DashboardPage(QWidget):
             if self._closed or sequence!=self._sequence or token!=self._scope():return
             c=value['cargo']
             if c['revision']!=token[2] or c['current_stop_id']!=token[4] or (token[8] and c['identity']!=token[8]):
-                self.notice.setText('Cargo changed while loading. Refreshing its source…')
+                self.notice.setText('Cargo changed while loading. Refreshing its source…');self.notice.show()
                 if self._sync_attempt!=token:self._sync_attempt=token;self.host._refresh_table()
                 return
             self.data=value;self._render(value)
         def failed(error):
             self._jobs.remove(job)
             if not self._closed and sequence==self._sequence:
-                self.notice.setText('Dashboard could not load: '+error+'. Use Refresh to try again.')
+                self.notice.setText('Dashboard could not load: '+error+'. Use Refresh to try again.');self.notice.show()
                 self.crew_notice.setText('Personnel data unavailable. Open Personnel to review.');self.cargo_caption.setText('Cargo data unavailable. Open Cargo to review.')
         job.signals.done.connect(done);job.signals.failed.connect(failed);self.pool.start(job)
     def _render(self,value):
@@ -345,9 +351,8 @@ class DashboardPage(QWidget):
         self.crew_table.setVisible(p['status']=='ready')
         self.drawer_scope.setText(self.crew_scope.text());self.drawer_totals.setText(f'{p["boarding"] or 0} Boarding / {p["leaving"] or 0} Leaving')
         for i,key in enumerate(('All','Boarding','Leaving')):self.drawer_tabs.setTabText(i,f'{key} ({len(p["rows"]) if i==0 else p[key.lower()] or 0})')
-        self.filter_drawer();self.notice.setText('Local data / counts are planned personnel at the exact selected visit.')
+        self.filter_drawer();self.notice.clear();self.notice.hide()
         if p['status']!='ready':self.close_drawer()
-        self._adapt()
     def select_version(self,index):
         identifier=self.version_combo.currentData()
         explicit=identifier is not None
@@ -375,14 +380,6 @@ class DashboardPage(QWidget):
     def _place_drawer(self):
         self.overlay.setGeometry(self.rect());self.shade.setGeometry(self.overlay.rect());width=min(650,max(300,self.width()-24));self.drawer.setGeometry(self.width()-width,0,width,self.height())
     def resizeEvent(self,event):
-        super().resizeEvent(event);self._adapt();self._place_drawer()
-    def _adapt(self):
-        compact=self.width()<1050
-        if getattr(self,'_compact',None)==compact:return
-        self._compact=compact
-        self.work_layout.removeWidget(self.cargo_panel);self.work_layout.removeWidget(self.personnel_panel)
-        self.work_layout.setDirection(QHBoxLayout.Direction.TopToBottom if compact else QHBoxLayout.Direction.LeftToRight)
-        self.work_layout.addWidget(self.cargo_panel,0 if compact else 7);self.work_layout.addWidget(self.personnel_panel,0 if compact else 3)
-        self.personnel_panel.setMaximumWidth(16777215 if compact else 460)
+        super().resizeEvent(event);self._place_drawer()
     def shutdown(self):
         self._closed=True;self._sequence+=1;self.refresh_timer.stop();self.pool.waitForDone(10000)

@@ -1,4 +1,4 @@
-# MarineOps 1.2.11
+# MarineOps 1.2.21
 
 MarineOps is an offline Windows desktop application for cargo transfers, personnel movements, voyage planning and berthing plans. It opens Dashboard by default; Cargo and Personnel retain separate workflows and SQLite databases.
 
@@ -6,11 +6,17 @@ The 1.2.8 UI update adds a charcoal appearance and a shared left navigation for 
 
 ## Install or run
 
-- Installer: `release/MarineOps-Setup-1.2.11.exe`.
-- Portable: extract `release/MarineOps-1.2.11-Windows-x64.zip`, then run `MarineOps/MarineOps.exe`. Keep `_internal` alongside the executable.
+- Installer: `release/MarineOps-Setup-1.2.21.exe`.
+- Portable: extract `release/MarineOps-1.2.21-Windows-x64.zip`, then run `MarineOps/MarineOps.exe`. Keep `_internal` alongside the executable.
 - Use `--cargo` or `--personnel` to open a workspace directly.
 
 Installation is per user. Business data stays in `%LOCALAPPDATA%/Cargo Track/Cargo Track` unless changed in Settings. The legacy directory, preferences and activation identity are retained for upgrades. Set `CARGO_TRACK_DATA_DIR` to an independent folder for isolated validation.
+
+## Current upgrade notes
+
+Voyage now uses explicit, repeatable port visits. Add each actual port call in Dashboard → Voyages in the correct order before planning port pickups and deliveries. Historical Complete plans that used an automatically appended port remain available, but cannot be revised under the new route rules. Keep the historical version, add the actual port calls, and create a Remaining plan in Personnel with the appropriate starting stop. Review the resulting actions before publishing or exporting.
+
+If setup reports an installation warning, MarineOps is already installed. Follow the displayed path to open it if shortcut creation failed; if old program files could not be removed, the warning identifies their retained folder. Quiet setup returns 0 on success, 2 when installation completed with a warning or launch failed, and 1 when installation did not complete.
 
 ## Changes in 1.2.8
 
@@ -53,7 +59,7 @@ powershell -NoProfile -File tools/verify_current_upgrade.ps1 -PreviousVersion 1.
 
 This requires both installer and portable artifacts for that previous version. The check creates fictional data, a workspace installation directory and a workspace test-desktop folder. It does not replace the user's installed application or live ledgers. Missing baseline artifacts are reported as an error for this upgrade check.
 
-To attach measured evidence to the current release report, pass `--test-log`, `--native-report` and `--package-report` to `verify_workspace_release.py`. The upgrade report must name the current version and match its executable hash. The final report is `release/MarineOps-release-validation-1.2.11.json`.
+To attach measured evidence to the current release report, pass `--test-log`, `--native-report` and `--package-report` to `verify_workspace_release.py`. The upgrade report must name the current version and match its executable hash. The final report is `release/MarineOps-release-validation-1.2.21.json`.
 
 ## Product rules and history
 

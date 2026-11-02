@@ -62,7 +62,7 @@ class CrewChangeEditorTests(unittest.TestCase):
     setUp=frontend.FrontendTests.setUp
     tearDown=frontend.FrontendTests.tearDown
     wait=frontend.FrontendTests.wait
-    def test_new_sign_off_plan_adds_terminal_port_and_publishes_without_review_assignment(self):
+    def test_sign_off_requires_explicit_return_port_and_publishes(self):
         service=self.page.service
         off=service.bind_record({'name':'Returning Crew','position':'Engineer','date':'2026-10-06',
                                 'direction':'Sign-off','from_name':'CHA'},self.page.source)
@@ -70,6 +70,8 @@ class CrewChangeEditorTests(unittest.TestCase):
         cargo_before=self.f.cargo_path.read_bytes()
         builder=CrewPlanBuilder(self.page)
         try:
+            self.assertTrue(builder.build()['issues'])
+            builder.vessels.setCurrentIndex(builder.vessels.findData(self.f.shore));builder.add_stop()
             plan=builder.build();self.assertEqual([],plan['issues'])
             self.assertEqual(self.f.shore,plan['stops'][-1]['vessel_id'])
             self.page.draft=plan;self.page.show_plan(plan);editor=self.page.live_builder
@@ -89,6 +91,7 @@ class CrewChangeEditorTests(unittest.TestCase):
             'date':'2026-10-06','direction':'Sign-off','vessel':'CHA'},self.page.source))
         builder=CrewPlanBuilder(self.page)
         try:
+            builder.vessels.setCurrentIndex(builder.vessels.findData(self.f.shore));builder.add_stop()
             self.assertEqual(self.f.shore,builder.route.item(builder.route.count()-1).data(256)['vessel_id'])
             builder.route.setCurrentRow(builder.route.count()-1);builder.remove_stop()
             plan=builder.build();self.assertTrue(plan['issues'])

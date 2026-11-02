@@ -92,6 +92,10 @@ def read_cargo(path, *, selected_cargo=None, active_only=False):
         voyage = conn.execute("SELECT * FROM voyages WHERE id=?", (state["current_voyage_id"],)).fetchone()
         stops = [dict(r) for r in conn.execute("SELECT * FROM voyage_stops WHERE voyage_id=? AND removed=0 ORDER BY position,id",
                                              (state["current_voyage_id"],))]
+        port_names = {r['id']: r['name'] for r in locations if r['kind'] == 'SHORE'}
+        for stop in stops:
+            if stop['vessel_id'] in port_names:
+                stop['vessel_name_snapshot'] = port_names[stop['vessel_id']]
         where,parameters='',[]
         if selected_cargo is not None:
             parameters=sorted(set(int(n) for n in selected_cargo))

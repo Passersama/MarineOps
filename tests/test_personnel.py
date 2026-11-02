@@ -82,6 +82,7 @@ class PersonnelTests(unittest.TestCase):
         self.service.commit_import(self.service.import_preview(parsed, self.snapshot, self.plan))
         crew = self.service.crew_records(self.plan, self.snapshot)
         self.assertTrue(all(r["to_name"] == "CHA" and r["comment"] == "Keep UPPER Comment" for r in crew))
+        self.add_port_calls(departure=True)
         export = self.root / "title-export.xlsx"
         saved = self.service.save_berth(self.generate(personnel=crew, mode="Final"))
         export_plan(saved, export)
@@ -172,6 +173,14 @@ class PersonnelTests(unittest.TestCase):
         self.seq += 1
         return self.cargo.handle(Command(f"personnel-test-{self.seq}", operation, payload)).result
 
+    def add_port_calls(self, departure=False, arrival=False):
+        start = self.command("add_stop", {"vessel_id": self.shore})["stop_id"] if departure else None
+        end = self.command("add_stop", {"vessel_id": self.shore})["stop_id"] if arrival else None
+        if start:
+            stops = [r["id"] for r in read_cargo(self.cargo_path)["stops"] if r["id"] != start]
+            self.command("reorder_stops", {"stop_ids": [start] + stops})
+        return start, end
+
     def record(self, name="Person A", source="xxPort", target="CHA"):
         return self.service.bind_record({"name": name, "position": "Engineer", "nationality": "Test",
             "from_name": source, "to_name": target, "date": "2026-10-06", "direction": "Transfer", "comment": ""}, self.snapshot)
@@ -226,13 +235,14 @@ class PersonnelTests(unittest.TestCase):
         self.assertNotIn("SECRET-", json.dumps(self.service.passengers(self.plan)))
         self.assertEqual(before, path.read_bytes())
 
-    def test_sample_plan_counts_and_terminal_only_port(self):
+    def test_sample_plan_counts_with_explicit_port_calls(self):
+        self.add_port_calls(departure=True, arrival=True)
         self.imported()
         plan = self.generate()
         self.assertEqual([], plan["issues"])
-        self.assertEqual(["CHA", "Niger", "INN", "xxPort"], [s["name"] for s in plan["stops"]])
-        self.assertEqual([1, 1, 2, 1], [len(s["drop_passengers"]) for s in plan["stops"]])
-        self.assertEqual(1, len(plan["stops"][0]["pick_passengers"]))
+        self.assertEqual(["xx port", "CHA", "Niger", "INN", "xx port"], [s["name"] for s in plan["stops"]])
+        self.assertEqual([0, 1, 1, 2, 1], [len(s["drop_passengers"]) for s in plan["stops"]])
+        self.assertEqual(1, len(plan["stops"][1]["pick_passengers"]))
         self.assertFalse(plan["stops"][-1]["pick_passengers"])
         self.assertNotIn("departure", plan_text(plan).lower())
 
@@ -326,27 +336,28 @@ class PersonnelTests(unittest.TestCase):
             self.service.db.execute("UPDATE personnel_history SET reason='changed'")
 
     def test_duplicate_stop_needs_specific_assignment(self):
+        departure, _ = self.add_port_calls(departure=True)
         self.command("add_stop", {"vessel_id": self.a})
         identifier = self.passenger()
         unresolved = self.generate()
         self.assertIn("Select a specific repeated stop", [e["message"] for e in unresolved["issues"]])
         last = read_cargo(self.cargo_path)["stops"][-1]["id"]
-        plan = self.generate(assignments={f"Passengers:{identifier}": {"pick": None, "drop": last}})
+        plan = self.generate(assignments={f"Passengers:{identifier}": {"pick": departure, "drop": last}})
         self.assertFalse(plan["issues"])
         self.assertFalse(plan["stops"][0]["drop_passengers"])
-        self.assertEqual(1, len(plan["stops"][-2]["drop_passengers"]))
+        self.assertEqual(1, len(plan["stops"][-1]["drop_passengers"]))
 
     def test_reverse_route_is_not_reordered(self):
         self.passenger(source="INN", target="CHA")
         plan = self.generate()
         self.assertTrue(plan["issues"])
-        self.assertEqual([self.s1, self.s2, self.s3, "PORT"], [s["id"] for s in plan["stops"]])
+        self.assertEqual([self.s1, self.s2, self.s3], [s["id"] for s in plan["stops"]])
 
     def test_remaining_does_not_use_a_passed_pickup_stop(self):
         self.passenger(source="CHA", target="INN")
         plan = self.generate(mode="Remaining", start_stop_id=self.s2)
         self.assertTrue(plan["issues"])
-        self.assertEqual([2, 3, 4], [s["number"] for s in plan["stops"]])
+        self.assertEqual([2, 3], [s["number"] for s in plan["stops"]])
 
     def test_remaining_waiting_port_origin_requires_pickup(self):
         identifier = self.passenger()
@@ -358,6 +369,7 @@ class PersonnelTests(unittest.TestCase):
         self.assertEqual(1, len(loaded["stops"][0]["drop_passengers"]))
 
     def test_followup_port_pickup_never_delivers_to_earlier_ships(self):
+        self.add_port_calls(arrival=True)
         identifier = self.passenger()
         plan = self.generate(followups=[f"Passengers:{identifier}"])
         self.assertFalse(plan["issues"])
@@ -451,6 +463,7 @@ class PersonnelTests(unittest.TestCase):
             revise_complete(saved, pending, changed, self.service.passengers(self.plan))
 
     def test_complete_version_preserves_finished_actions_and_original_port(self):
+        self.add_port_calls(departure=True)
         identifier = self.passenger()
         saved = self.service.save_berth(self.generate(), published=True)
         self.service.transition([identifier], "On Board")
@@ -488,6 +501,7 @@ class PersonnelTests(unittest.TestCase):
         book.close()
 
     def test_excel_snapshot_counts_structure_dates_and_literal_text(self):
+        self.add_port_calls(departure=True)
         self.passenger(name="=1+1")
         numbers = [self.command("create_transfer", {"description": desc, "from_location_id": self.a,
                   "to_location_id": self.b, "physical_id": "", "comment": ""})["no"] for desc in ("Material A", "Material B")]
@@ -499,7 +513,7 @@ class PersonnelTests(unittest.TestCase):
         body = [str(cell.value or '') for row in book.active for cell in row]
         self.assertIn("Pick up 2 materials: 1. Material A to Niger; 2. Material B to Niger", body)
         self.assertFalse(any("departure" in value.casefold() for value in body))
-        self.assertEqual(6, book["Transfer Details"].max_row)
+        self.assertEqual(7, book["Transfer Details"].max_row)
         self.assertEqual("E2", book["Transfer Details"].freeze_panes)
         self.assertTrue(book["Transfer Details"].auto_filter.ref)
         self.assertFalse(any(c.data_type == "f" for sheet in book for row in sheet for c in row))
@@ -508,6 +522,7 @@ class PersonnelTests(unittest.TestCase):
         book.close()
 
     def test_readonly_cargo_integration_leaves_database_bytes_unchanged(self):
+        self.add_port_calls(departure=True, arrival=True)
         before = self.cargo_path.read_bytes()
         self.imported()
         saved = self.service.save_berth(self.generate(), published=True)
@@ -601,11 +616,11 @@ class PersonnelTests(unittest.TestCase):
         identifier = self.passenger(target="Niger")
         source = read_cargo(self.cargo_path)
         before = source["source_hash"]
-        source["stops"] = [source["stops"][2], source["stops"][0], dict(source["stops"][1], id="plan:added")]
+        source["stops"] = [dict(id="plan:port", vessel_id=self.shore, vessel_name_snapshot="xx port"), source["stops"][2], source["stops"][0], dict(source["stops"][1], id="plan:added")]
         plan = generate_plan(source, self.service.crew_records(self.plan, source), [], "2026-10-06", "xxPort", mode="Final")
         self.assertFalse(plan["issues"])
-        self.assertEqual(["INN", "CHA", "Niger"], [s["name"] for s in plan["stops"]])
-        self.assertEqual(identifier, plan["stops"][2]["drop_passengers"][0]["id"])
+        self.assertEqual(["xx port", "INN", "CHA", "Niger"], [s["name"] for s in plan["stops"]])
+        self.assertEqual(identifier, plan["stops"][3]["drop_passengers"][0]["id"])
         self.service.save_berth(plan, True)
         self.assertEqual(before, read_cargo(self.cargo_path)["source_hash"])
 
@@ -622,13 +637,14 @@ class PersonnelTests(unittest.TestCase):
         self.assertTrue(all(not item["candidates"] for item in preview["items"]))
 
     def test_final_repeated_vessel_defaults_to_first_feasible_stop_and_can_be_changed(self):
+        departure, _ = self.add_port_calls(departure=True)
         identifier = self.passenger()
         again = self.command("add_stop", {"vessel_id": self.a})["stop_id"]
         crew = self.service.crew_records(self.plan, read_cargo(self.cargo_path))
         first = self.generate(personnel=crew, mode="Final")
         self.assertFalse(first["issues"])
-        self.assertEqual(1, len(first["stops"][0]["drop_passengers"]))
-        moved = self.generate(personnel=crew, mode="Final", assignments={f"Passengers:{identifier}": {"pick": None, "drop": again}})
+        self.assertEqual(1, len(first["stops"][1]["drop_passengers"]))
+        moved = self.generate(personnel=crew, mode="Final", assignments={f"Passengers:{identifier}": {"pick": departure, "drop": again}})
         self.assertEqual(1, len(moved["stops"][-1]["drop_passengers"]))
 
     def test_ignored_headers_never_become_name_or_date_even_in_manual_mapping(self):

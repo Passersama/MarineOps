@@ -6,10 +6,10 @@ import heapq
 import time
 from itertools import count
 
-from .personnel_import import digest
-from .personnel_routes import transfer_origin, leg_order
+from .personnel_import import digest, key as name_key
+from .personnel_routes import transfer_origin, transfer_name, leg_order
 
-RULES_VERSION = 2
+RULES_VERSION = 3
 
 
 def make_problem(snapshot, personnel, materials, *, excluded=(), pins=(), locked=None, reference_order=()):
@@ -17,6 +17,8 @@ def make_problem(snapshot, personnel, materials, *, excluded=(), pins=(), locked
     excluded = set(excluded)
     locations = {r['id']: r for r in snapshot['locations'] if r['active']}
     shore = next((r['id'] for r in locations.values() if r['kind'] == 'SHORE'), None)
+    transfer = transfer_name(snapshot)
+    transfer_ids = {r['id'] for r in locations.values() if r['kind'] != 'SHORE' and transfer and name_key(r['name']) == name_key(transfer)}
     rows = [{**copy.deepcopy(r), 'kind': 'Passengers'} for r in personnel] + copy.deepcopy(materials)
     tasks, errors = [], []
     for row in rows:
@@ -26,11 +28,12 @@ def make_problem(snapshot, personnel, materials, *, excluded=(), pins=(), locked
         if row['kind'] == 'Materials' and row.get('status') == 'Done':
             continue
         previous = 'Passengers:' + row['previous_task_id'] if row.get('previous_task_id') else None
-        initial = (not previous and ((row['kind'] == 'Materials' and row.get('from_id') == shore) or
-                   (row['kind'] == 'Passengers' and transfer_origin(row, snapshot))))
+        initial = (not previous and row['kind'] == 'Passengers' and row.get('from_id') != shore and transfer_origin(row, snapshot))
         if row['kind'] == 'Materials' and row.get('status') == 'On Board':
             initial = True
         problems = [p for p in row.get('issues', []) if p != 'Missing date']
+        if row.get('to_id') in transfer_ids or (not initial and row.get('from_id') in transfer_ids):
+            problems.append('Transfer vessel cannot be an actual call; review this transfer leg')
         if row.get('to_id') not in locations or (not initial and row.get('from_id') not in locations):
             problems.append('Missing or inactive source / destination')
         if row.get('from_id') == row.get('to_id'):
@@ -61,6 +64,8 @@ def make_problem(snapshot, personnel, materials, *, excluded=(), pins=(), locked
     pin_ids = {p['id'] for p in normalized_pins}
     if len(pin_ids) != len(normalized_pins) or any(p['location_id'] not in locations for p in normalized_pins):
         errors.append('Invalid retained visit identities or locations')
+    if any(p['location_id'] in transfer_ids for p in normalized_pins):
+        errors.append('The configured transfer vessel cannot be retained as a call')
     locked = copy.deepcopy(locked or {})
     pin_locations = {p['id']: p['location_id'] for p in normalized_pins}
     for key, assignment in locked.items():

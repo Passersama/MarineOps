@@ -1,3 +1,7 @@
+## 1.2.12：显式港口停靠（取代下文旧版港口默认规则）
+
+Voyage 可添加、排序和选择港口停靠，同一港口的每次到访都有独立身份。靠船计划不自动补出发或末尾港口；Sign-on 必须从实际港口上船后送至目标船，Sign-off 必须从来源船接人后送至实际港口。待装港口物料同样需要实际港口装货站。自动规划可提出必要港口站点供审核，采用的是独立计划路线，不修改 Cargo Voyage。未知、停用或缺失船名需复核。历史计划保持原样，旧版自动末尾港口的 Complete 计划需用实际站点生成 Remaining 计划。
+
 # MarineOps
 
 ## 2026-10-29：黑灰 UI 适配（1.2.8）
@@ -70,7 +74,7 @@ The user imports a crew-change Excel list and produces a final berthing table. T
 - Begin with the selected Cargo Voyage. Automatically add matched crew vessels missing from that Voyage and allow independent additions, removals and order changes in the new plan. These changes never write to Cargo.
 - Repeated visits remain distinct. Default to the first feasible visit and allow the user to change the assignment.
 - Each vessel and the final Port has four groups: Drop passengers, Pick up passengers, Drop Materials from a source vessel, Pick up Materials to a destination vessel. Count material records and show multiple materials inline.
-- Omit the departure port. Save immutable plan versions and export an Excel final table with a details sheet.
+- Include explicit departure, intermediate and return port calls when present in the route. Save immutable plan versions and export an Excel final table with a details sheet.
 - Loading historical Complete / Remaining versions rebuilds a current Final draft while retaining the original. Edit plan works on the displayed draft/version and opens the main-page Edit draft directly tab, preserving chosen exclusions and valid exact repeated-visit assignments; selected materials with route problems remain reviewable.
 - Draft editing is personnel-only: double-click Name or Position for snapshot-local changes, use passenger inclusion and assignment controls, or use Add crew entry / Edit selected crew / Remove from plan. Explicit crew forms update the current crew list; direct cell edits affect only the draft and saved snapshot. Material selection belongs to initial generation and remains read-only during inline editing. Save and Export collect current edits without requiring Preview changes; saved versions remain immutable.
 - Distinguish Crew change date from Berthing plan date. The latter controls the Excel heading and proposed file name; saved snapshot dates stay fixed until a new draft is created.

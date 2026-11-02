@@ -16,6 +16,7 @@ from cargo_track.plan_store import latest_family_payloads, version_summaries
 class ArchitectureDataTests(unittest.TestCase):
     def setUp(self):
         self.f=fixtures.PersonnelTests();self.f.setUp()
+        self.f.add_port_calls(departure=True)
         self.identifier=self.f.passenger()
     def tearDown(self):self.f.tearDown()
     def saved(self):

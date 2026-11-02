@@ -422,12 +422,33 @@ class ApplicationService:
         self._audit(command_id,"location",row["id"],"VESSEL_DELETED",before=dict(row),after={"deleted":True})
         return {"id":row["id"]}
 
+    def _cmd_complete_voyage(self,command_id,p):
+        current=self.repo.current_voyage()
+        if current is None or current["id"] != p.get("voyage_id"):
+            raise AppError("NO_VOYAGE","The active voyage changed. Reload before completing it.")
+        open_count=self.db.execute("SELECT count(*) FROM transfer_legs WHERE is_void=0 AND status!='Done'").fetchone()[0]
+        now=now_utc()
+        self.db.execute("UPDATE app_state SET current_voyage_id=NULL,current_stop_id=NULL WHERE id=1")
+        self.db.execute("UPDATE voyages SET is_current=0,archived=1,updated_utc=? WHERE id=?",(now,current["id"]))
+        self._audit(command_id,"voyage",current["id"],"VOYAGE_COMPLETED",before={"name":current["name"]},after={"unfinished_transfers":open_count})
+        return {"voyage_id":current["id"],"unfinished_transfers":open_count}
+
     def _cmd_create_voyage(self,command_id,p):
-        name=self._required(p.get("name"),"Voyage name",120);current=self.repo.current_voyage();now=now_utc()
+        name=self._required(p.get("name"),"Voyage name",120)
+        if ("expected_epoch" in p and p["expected_epoch"]!=self.dataset_epoch
+                or "expected_revision" in p and p["expected_revision"]!=self._revision()):
+            raise AppError("ROUTE_CONFLICT","The workspace changed while this voyage was being prepared. Refresh and create it again.")
+        stop_ids=p.get("location_ids",[])
+        if not isinstance(stop_ids,list):raise AppError("VALIDATION","Choose a valid list of voyage stops.")
+        locations=[self._location(identifier) for identifier in stop_ids]
+        current=self.repo.current_voyage();now=now_utc()
         if current:self.db.execute("UPDATE voyages SET is_current=0,archived=1,updated_utc=? WHERE id=?",(now,current["id"]))
         cur=self.db.execute("INSERT INTO voyages(name,is_current,created_utc,updated_utc) VALUES(?,1,?,?)",(name,now,now))
         self.db.execute("UPDATE app_state SET current_voyage_id=?,current_stop_id=NULL WHERE id=1",(cur.lastrowid,))
-        self._audit(command_id,"voyage",cur.lastrowid,"VOYAGE_CREATED",after={"name":name,"stops":[]})
+        for position,location in enumerate(locations,1):
+            stop=self.db.execute("INSERT INTO voyage_stops(voyage_id,vessel_id,vessel_name_snapshot,position,created_utc) VALUES(?,?,?,?,?)",(cur.lastrowid,location["id"],location["name"],position,now))
+            self._audit(command_id,"stop",stop.lastrowid,"VOYAGE_STOP_ADDED",after={"vessel_id":location["id"],"name":location["name"],"position":position})
+        self._audit(command_id,"voyage",cur.lastrowid,"VOYAGE_CREATED",after={"name":name,"stops":[location["name"] for location in locations]})
         return {"voyage_id":cur.lastrowid,"name":name}
 
     def _cmd_copy_voyage(self,command_id,p):
@@ -478,7 +499,6 @@ class ApplicationService:
         state=self.repo.current_state()
         if state["current_voyage_id"] is None:raise AppError("NO_VOYAGE","Create a voyage before adding a stop.")
         vessel=self._location(p.get("vessel_id"))
-        if vessel["kind"]!="VESSEL":raise AppError("INVALID_STOP","The port is the terminal plan stop, not a Fleet vessel stop.")
         position=int(self.db.execute("SELECT COALESCE(MAX(position),0)+1 FROM voyage_stops WHERE voyage_id=? AND removed=0",(state["current_voyage_id"],)).fetchone()[0])
         cur=self.db.execute("INSERT INTO voyage_stops(voyage_id,vessel_id,vessel_name_snapshot,position,created_utc) VALUES(?,?,?,?,?)",(state["current_voyage_id"],vessel["id"],vessel["name"],position,now_utc()))
         self._audit(command_id,"stop",cur.lastrowid,"VOYAGE_STOP_ADDED",after={"vessel_id":vessel["id"],"name":vessel["name"],"position":position})
@@ -639,10 +659,10 @@ class ApplicationService:
             state=self.repo.current_state()
             vessels=[dict(r) for r in db.execute("SELECT id,name,active FROM locations l WHERE kind='VESSEL' AND NOT EXISTS(SELECT 1 FROM audit_events e WHERE e.entity_type='location' AND e.entity_id=l.id AND e.event_type='VESSEL_DELETED') ORDER BY active DESC,name COLLATE NOCASE")]
             locations=[dict(r) for r in db.execute("SELECT id,name,active,kind FROM locations l WHERE NOT EXISTS(SELECT 1 FROM audit_events e WHERE e.entity_type='location' AND e.entity_id=l.id AND e.event_type='VESSEL_DELETED') ORDER BY kind,name COLLATE NOCASE")]
-            voyages=[dict(r) for r in db.execute("SELECT id,name,is_current,archived,created_utc FROM voyages v WHERE NOT EXISTS(SELECT 1 FROM audit_events e WHERE e.entity_type='voyage' AND e.entity_id=v.id AND e.event_type='VOYAGE_DELETED') ORDER BY id DESC")]
+            voyages=[dict(r) for r in db.execute("SELECT id,name,is_current,archived,created_utc, EXISTS(SELECT 1 FROM audit_events c WHERE c.entity_type='voyage' AND c.entity_id=v.id AND c.event_type='VOYAGE_COMPLETED') AS completed FROM voyages v WHERE NOT EXISTS(SELECT 1 FROM audit_events e WHERE e.entity_type='voyage' AND e.entity_id=v.id AND e.event_type='VOYAGE_DELETED') ORDER BY id DESC")]
             stops=[]
             if state["current_voyage_id"] is not None:
-                stops=[dict(r) for r in db.execute("SELECT s.id,s.vessel_id,s.vessel_name_snapshot,s.position,l.name AS current_name FROM voyage_stops s JOIN locations l ON l.id=s.vessel_id WHERE s.voyage_id=? AND s.removed=0 ORDER BY s.position,s.id",(state["current_voyage_id"],))]
+                stops=[dict(r) for r in db.execute("SELECT s.id,s.vessel_id,CASE WHEN l.kind='SHORE' THEN l.name ELSE s.vessel_name_snapshot END AS vessel_name_snapshot,s.position,l.name AS current_name FROM voyage_stops s JOIN locations l ON l.id=s.vessel_id WHERE s.voyage_id=? AND s.removed=0 ORDER BY s.position,s.id",(state["current_voyage_id"],))]
             settings={r["key"]:r["value"] for r in db.execute("SELECT key,value FROM settings")}
             pickup=[];delivery=[];other=[]
             if state["vessel_id"] is not None:

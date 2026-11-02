@@ -101,6 +101,25 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(["Route B", "Route A"], [row["vessel_name_snapshot"] for row in route])
         self.assertTrue(next(row for row in self.service.voyage_history() if row["id"] == old_id)["archived"])
 
+    def test_complete_voyage_preserves_open_cargo_and_history(self):
+        ship = self.vessel("Ship")
+        cargo = self.transfer(source=ship)
+        voyage = self.command("create_voyage", {"name": "Completed"}).result["voyage_id"]
+        self.command("add_stop", {"vessel_id": ship})
+        stop = self.service.workspace_snapshot()["stops"][0]["id"]
+        self.command("choose_stop", {"stop_id": stop})
+        result = self.command("complete_voyage", {"voyage_id": voyage}).result
+        snapshot = self.service.workspace_snapshot()
+        self.assertIsNone(snapshot["current_voyage_id"])
+        self.assertIsNone(snapshot["current_stop_id"])
+        self.assertEqual(1, result["unfinished_transfers"])
+        self.assertEqual("Waiting", self.service.transfer_detail(cargo["no"])["row"]["status"])
+        self.assertTrue(next(v for v in self.service.voyage_history() if v["id"] == voyage)["archived"])
+        with self.assertRaises(AppError):
+            self.command("complete_voyage", {"voyage_id": voyage})
+        self.command("copy_voyage", {"name": "Next", "voyage_id": voyage})
+        self.assertEqual("Ship", self.service.workspace_snapshot()["stops"][0]["vessel_name_snapshot"])
+
     def test_export_escapes_formula_text_and_backup_restore_is_validated(self):
         row = self.transfer(description="=1+1")
         csv_path = self.root / "ledger.csv"

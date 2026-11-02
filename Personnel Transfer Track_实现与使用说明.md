@@ -37,14 +37,14 @@ Personnel 表显示姓名、职位、上下船方向、来源、目的地、日�
 
 点击 **Preview final plan** 查看结果。未解决的船名或不可行的转运路线会显示问题，需要先修正再保存和导出。
 
-每条船和最后的 Port 均含四项：
+每个实际船舶或港口停靠均含四项：
 
 1. **Drop xx passengers**：每位 `Name(Position)`。
 2. **Pick up xx passengers**：每位 `Name(Position)`。
 3. **Drop xx Materials**：`Material Name from Vessel Name`，多条物资同一行显示。
 4. **Pick up xx Materials**：`Material Name to Vessel Name`，多条物资同一行显示。
 
-物资数量按选中的物资记录条数统计。末尾港口名称在 Personnel **Settings → Port name** 设置。出发港口不列入计划。
+物资数量按选中的物资记录条数统计。港口名称在 Personnel **Settings → Port name** 设置；出发、中途或返回港口须作为实际停靠加入 Voyage 或计划，计划不会自动补末尾港口。
 
 ## 保存、修改和导出
 

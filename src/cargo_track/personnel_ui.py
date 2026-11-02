@@ -539,13 +539,6 @@ class CrewPlanBuilder(NativeDialog):
             if location["id"] in needed - vessel_ids:
                 self.append_stop({"id": "plan:" + str(uuid4()), "vessel_id": location["id"], "vessel_name_snapshot": location["name"]})
                 self.added_names.append(location["name"])
-        # New crew-change plans return sign-off passengers to the configured
-        # port. Existing edited routes and immutable versions keep their order.
-        if (not base_plan and shore is not None and shore not in vessel_ids
-                and any(r.get('to_id') == shore for r in self.crew)):
-            self.append_stop({'id': 'plan:' + str(uuid4()), 'vessel_id': shore,
-                              'vessel_name_snapshot': owner.read_model.port_name(self.source)})
-            self.added_names.append(owner.read_model.port_name(self.source))
         route_box = QHBoxLayout()
         route_panel = QVBoxLayout()
         route_panel.addWidget(QLabel("Final plan order (drag to reorder)"))
@@ -1042,7 +1035,7 @@ class CrewPlanBuilder(NativeDialog):
 
     def _refresh_assignments(self):
         source = self.route_snapshot()
-        names = {s["id"]: f"{i:02d}. {s['vessel_name_snapshot']}" for i, s in enumerate(source["stops"], 1)} | {"PORT": self.owner.read_model.port_name(source)}
+        names = {s["id"]: f"{i:02d}. {s['vessel_name_snapshot']}" for i, s in enumerate(source["stops"], 1)}
         selected = plan_task_selection(self.base_plan) if self.base_plan else set()
         available = set(self.base_plan.get("available_tasks", selected)) if self.base_plan else set()
         controls = sorted(zip(self.tasks, self.includes, self.assignments), key=lambda entry: leg_order(entry[0]))
@@ -1150,6 +1143,7 @@ class PersonnelPage(QWidget):
         self._write_pending=False
         self._latest_reads={}
         self._selected_crew_id=None
+        self._empty_crew_selection=False
         self._loading_list=False
         self._version_cache={}
         self._action_prepared=False
@@ -1384,7 +1378,7 @@ class PersonnelPage(QWidget):
         message(self, "Personnel Transfer Track", value, True)
 
     def _build(self):
-        root=QVBoxLayout(self);root.setContentsMargins(20,12,20,12);root.setSpacing(10)
+        root=QVBoxLayout(self);root.setContentsMargins(20,12,20,0);root.setSpacing(10)
         self._write_commands=[]
         nav=QHBoxLayout();self.navigation=WorkspaceNavigation('personnel');self.navigation.cargo_button.clicked.connect(self.back)
         nav.addWidget(self.navigation);self._write_commands.extend((self.navigation.dashboard_button,self.navigation.cargo_button,self.navigation.personnel_button));nav.addStretch()
@@ -1456,7 +1450,7 @@ class PersonnelPage(QWidget):
         for widget in (self.plan_tools,self.plan_export_button,self.save_plan_button):footer.addWidget(widget)
         berth_layout.addLayout(footer)
         self.notice=QLabel('');self.notice.setWordWrap(True);self.notice.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred)
-        status_row=QHBoxLayout();status_row.addWidget(self.notice,1);self.progress=QProgressBar();self.progress.setMaximumWidth(120);self.progress.setTextVisible(False);self.progress.hide();status_row.addWidget(self.progress);root.addLayout(status_row)
+        status_row=QHBoxLayout();status_row.addWidget(self.notice,1);self.progress=QProgressBar();self.progress.setMaximumWidth(120);self.progress.setTextVisible(False);self.progress.hide();status_row.addWidget(self.progress);tabs_layout.addLayout(status_row)
         self._selected_stop_id=None;self._preview_sync=False
         self.plan_combo.currentIndexChanged.connect(self.plan_changed)
         self._crew_search_timer=QTimer(self);self._crew_search_timer.setSingleShot(True);self._crew_search_timer.setInterval(200);self._crew_search_timer.timeout.connect(self._apply_crew_filter)
@@ -1507,6 +1501,9 @@ class PersonnelPage(QWidget):
         def received(source):
             if cargo_path != str(self.host.database_path):
                 return self.refresh_source()
+            old_source = self.source
+            if not source.get('voyage_id') and (old_source is None or old_source.get('voyage_id')):
+                self._empty_crew_selection=True
             self.source = source
             selected_vessel = self.view.currentData()
             self.view.blockSignals(True)
@@ -1526,14 +1523,19 @@ class PersonnelPage(QWidget):
         self.run_read(lambda: read_cargo(cargo_path,active_only=True), received,channel='cargo-source')
 
     def refresh_plans(self, selected=None, force=False):
+        if selected is not None:self._empty_crew_selection=False
         selected = selected or self.plan_combo.currentData()
-        if self.read_model.state and not any(p['id']==selected for p in self.read_model.plans()):
+        if self._empty_crew_selection:
+            selected = None
+        if not self._empty_crew_selection and self.read_model.state and not any(p['id']==selected for p in self.read_model.plans()):
             selected=self.read_model.state.get('plan_id')
         if force or not self.read_model.state or (selected and selected!=self.read_model.state.get('plan_id')):
             return self.run_service_read('ui_state',(selected,),lambda _:self.refresh_plans(selected),channel='crew-state')
         self._loading_list=False;self.tabs.setEnabled(not self._write_pending)
         self.plan_combo.blockSignals(True)
         self.plan_combo.clear()
+        if self.source and not self.source.get("voyage_id"):
+            self.plan_combo.addItem("No active crew list", None)
         for p in self.read_model.plans():
             self.plan_combo.addItem(p["name"], p["id"])
             self.plan_combo.setItemData(self.plan_combo.count()-1, f"Crew list reference date: {p['date']}", Qt.ItemDataRole.ToolTipRole)
@@ -1546,6 +1548,7 @@ class PersonnelPage(QWidget):
 
     def plan_changed(self):
         current=self.plan_combo.currentData()
+        if current is not None:self._empty_crew_selection=False
         self.rename_list_button.setEnabled(current is not None and not self._write_pending)
         if current!=self._selected_crew_id and self.view_state.dirty:
             self.plan_combo.blockSignals(True);self.plan_combo.setCurrentIndex(self.plan_combo.findData(self._selected_crew_id));self.plan_combo.blockSignals(False)
@@ -1591,7 +1594,7 @@ class PersonnelPage(QWidget):
     def refresh_rows(self):
         if not self.source:
             return
-        if self.plan_combo.currentData()!=self.read_model.state.get('plan_id'):
+        if self.plan_combo.currentData() and self.plan_combo.currentData()!=self.read_model.state.get('plan_id'):
             return self.plan_changed()
         selected={r['id'] for r in self.selected()} if self.rows_data else set()
         rows = self.read_model.crew_records(self.plan_combo.currentData(), self.source) if self.plan_combo.currentData() else []

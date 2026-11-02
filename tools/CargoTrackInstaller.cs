@@ -6,11 +6,12 @@ using System.Runtime.InteropServices;
 using System.Reflection;
 using System.Windows.Forms;
 using System.Drawing;
+using System.ComponentModel;
 
 [assembly: AssemblyTitle("MarineOps Setup")]
 [assembly: AssemblyProduct("MarineOps")]
-[assembly: AssemblyVersion("1.2.11.0")]
-[assembly: AssemblyFileVersion("1.2.11.0")]
+[assembly: AssemblyVersion("1.2.21.0")]
+[assembly: AssemblyFileVersion("1.2.21.0")]
 
 internal static class Installer
 {
@@ -39,14 +40,32 @@ internal static class Installer
             {
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                using (InstallOptions options = new InstallOptions(installDir, !noShortcut, !noLaunch))
+                using (InstallOptions options = new InstallOptions(installDir, desktopDir, shortcutName, !noShortcut, !noLaunch))
                 {
-                    if (options.ShowDialog() != DialogResult.OK) return 0;
-                    installDir = options.InstallPath;
-                    noShortcut = !options.CreateDesktopShortcut;
-                    noLaunch = !options.LaunchAfterInstall;
+                    options.ShowDialog();
+                    return options.Failed ? 1 : 0;
                 }
             }
+            string warning;
+            string installedExe = Install(installDir, desktopDir, shortcutName, !noShortcut, delegate { }, out warning);
+            if (!noLaunch)
+            {
+                try { Process.Start(new ProcessStartInfo(installedExe) { UseShellExecute = true }); }
+                catch { return 2; } // Installed, but launch failed.
+            }
+            return warning.Length == 0 ? 0 : 2; // Installed with a warning.
+        }
+        catch (Exception ex)
+        {
+            if (Array.IndexOf(args, "--quiet") < 0) MessageBox.Show(ex.Message, "MarineOps setup failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
+    }
+
+    internal static string Install(string installDir, string desktopDir, string shortcutName, bool shortcut, Action<string, int> report, out string warning)
+    {
+            warning = "";
+            report("Preparing installation", -1);
             string fullTarget = Path.GetFullPath(installDir);
             ValidateInstallTarget(fullTarget);
             string parent = Path.GetDirectoryName(fullTarget);
@@ -60,6 +79,7 @@ internal static class Installer
                 using (Stream fs = payload)
                 using (ZipArchive archive = new ZipArchive(fs, ZipArchiveMode.Read))
                 {
+                    int total = archive.Entries.Count, completed = 0;
                     foreach (ZipArchiveEntry entry in archive.Entries)
                     {
                         string destination = Path.GetFullPath(Path.Combine(stage, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
@@ -72,8 +92,11 @@ internal static class Installer
                             using (Stream input = entry.Open())
                             using (FileStream output = File.Create(destination)) input.CopyTo(output);
                         }
+                        completed++;
+                        report("Installing files", total == 0 ? 0 : (int)(90L * completed / total));
                     }
                 }
+                report("Finishing installation", -1);
                 string exe = Path.Combine(stage, "MarineOps", "MarineOps.exe");
                 if (!File.Exists(exe)) throw new InvalidDataException("The package is incomplete: MarineOps.exe was not found.");
                 string previous = fullTarget + ".previous-" + Guid.NewGuid().ToString("N");
@@ -82,7 +105,11 @@ internal static class Installer
                 {
                     if (Directory.Exists(fullTarget)) { Directory.Move(fullTarget, previous); movedPrevious = true; }
                     Directory.Move(stage, fullTarget);
-                    if (movedPrevious) Directory.Delete(previous, true);
+                    if (movedPrevious)
+                    {
+                        try { Directory.Delete(previous, true); }
+                        catch (Exception ex) { warning = "The previous program files could not be removed from " + previous + ". " + ex.Message; }
+                    }
                 }
                 catch
                 {
@@ -96,17 +123,13 @@ internal static class Installer
             }
 
             string installedExe = Path.Combine(fullTarget, "MarineOps", "MarineOps.exe");
-            if (!noShortcut) CreateShortcut(installedExe, desktopDir, shortcutName);
-            if (!noLaunch) Process.Start(new ProcessStartInfo(installedExe) { UseShellExecute = true });
-            if (!quiet) MessageBox.Show("MarineOps was installed for this Windows user." + Environment.NewLine + fullTarget,
-                "MarineOps setup", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            if (Array.IndexOf(args, "--quiet") < 0) MessageBox.Show(ex.Message, "MarineOps setup failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return 1;
-        }
+            if (shortcut)
+            {
+                report("Creating desktop shortcut", -1);
+                try { CreateShortcut(installedExe, desktopDir, shortcutName); }
+                catch (Exception ex) { warning += (warning.Length > 0 ? Environment.NewLine : "") + "The desktop shortcut could not be created. Open MarineOps from " + installedExe + ". " + ex.Message; }
+            }
+            return installedExe;
     }
 
     internal static void ValidateInstallTarget(string path)
@@ -194,45 +217,111 @@ internal static class Installer
 
 internal sealed class InstallOptions : Form
 {
-    internal readonly TextBox PathInput = new TextBox();
-    internal readonly CheckBox ShortcutOption = new CheckBox();
-    internal readonly CheckBox LaunchOption = new CheckBox();
-    internal readonly Button InstallButton = new Button();
-    internal string InstallPath { get { return Path.GetFullPath(PathInput.Text.Trim()); } }
-    internal bool CreateDesktopShortcut { get { return ShortcutOption.Checked; } }
-    internal bool LaunchAfterInstall { get { return LaunchOption.Checked; } }
+    private readonly TextBox path = new TextBox();
+    private readonly CheckBox shortcut = new CheckBox(), launch = new CheckBox();
+    private readonly Button browse = new Button(), primary = new Button(), secondary = new Button();
+    private readonly Label heading = new Label(), detail = new Label(), status = new Label(), folder = new Label();
+    private readonly ProgressBar progress = new ProgressBar();
+    private readonly string desktopDir, shortcutName;
+    private bool running, finished;
+    private string installedExe, installWarning;
+    internal bool Failed { get; private set; }
+    private readonly Color ink = Color.FromArgb(26, 42, 58), muted = Color.FromArgb(82, 102, 119);
+    private readonly Color accent = Color.FromArgb(0, 107, 142), paper = Color.FromArgb(248, 251, 252);
 
-    internal InstallOptions(string initialPath, bool shortcut, bool launch)
+    internal InstallOptions(string initialPath, string desktop, string name, bool makeShortcut, bool launchAfter)
     {
+        desktopDir = desktop; shortcutName = name;
         Text = "MarineOps setup";
         Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location);
-        Font = new Font("Segoe UI", 11);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(620, 280);
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        Font = new Font("Segoe UI", 10F); AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new Size(760, 440); FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false; StartPosition = FormStartPosition.CenterScreen;
-        Label heading = new Label { Text = "Install MarineOps 1.2.11", AutoSize = true, Location = new Point(24, 20), Font = new Font(Font, FontStyle.Bold) };
-        Label label = new Label { Text = "Installation folder", AutoSize = true, Location = new Point(24, 60) };
-        PathInput.Text = initialPath; PathInput.SetBounds(24, 88, 450, 30); PathInput.AccessibleName = "Installation folder";
-        Button browse = new Button { Text = "Browse…", Location = new Point(484, 86), Size = new Size(112, 34) };
+        BackColor = paper; ForeColor = ink;
+        Panel brand = new Panel { BackColor = Color.FromArgb(16, 44, 65), Dock = DockStyle.Left, Width = 220 };
+        PictureBox logo = new PictureBox { Image = Icon.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom, Location = new Point(28, 32), Size = new Size(52, 52) };
+        Label wordmark = new Label { Text = "MarineOps", ForeColor = Color.White, AutoSize = true, Location = new Point(28, 102), Font = new Font("Segoe UI", 19F, FontStyle.Bold) };
+        Label brandText = new Label { Text = "Cargo, personnel and\nvoyage operations", ForeColor = Color.FromArgb(197, 221, 229), Location = new Point(30, 152), Size = new Size(175, 58) };
+        Label version = new Label { Text = "VERSION " + Assembly.GetExecutingAssembly().GetName().Version.ToString(3), ForeColor = Color.FromArgb(169, 206, 217), AutoSize = true, Location = new Point(30, 384), Font = new Font("Segoe UI", 9F) };
+        brand.Controls.AddRange(new Control[] { logo, wordmark, brandText, version }); Controls.Add(brand);
+        bool update = File.Exists(Path.Combine(initialPath, "MarineOps", "MarineOps.exe")) || File.Exists(Path.Combine(initialPath, "CargoTrack", "CargoTrack.exe"));
+        heading.Text = update ? "Update MarineOps" : "Install MarineOps"; heading.Font = new Font("Segoe UI", 19F, FontStyle.Bold); heading.SetBounds(254, 28, 470, 42);
+        detail.Text = update ? "Your existing Cargo and Personnel data will be kept." : "Choose where MarineOps will be installed for this Windows user.";
+        detail.ForeColor = muted; detail.SetBounds(256, 78, 460, 46);
+        folder.Text = "Installation folder"; folder.Font = new Font(Font, FontStyle.Bold); folder.SetBounds(256, 135, 450, 24);
+        path.Text = initialPath; path.SetBounds(256, 164, 350, 28); path.AccessibleName = "Installation folder";
+        browse.Text = "Browse…"; browse.SetBounds(614, 161, 112, 33);
         browse.Click += delegate {
             using (FolderBrowserDialog picker = new FolderBrowserDialog()) {
                 picker.Description = "Choose a dedicated MarineOps installation folder";
-                if (Directory.Exists(PathInput.Text)) picker.SelectedPath = PathInput.Text;
-                if (picker.ShowDialog(this) == DialogResult.OK) PathInput.Text = picker.SelectedPath;
+                if (Directory.Exists(path.Text)) picker.SelectedPath = path.Text;
+                if (picker.ShowDialog(this) == DialogResult.OK) path.Text = picker.SelectedPath;
             }
         };
-        ShortcutOption.Text = "Create desktop shortcut"; ShortcutOption.Checked = shortcut;
-        ShortcutOption.SetBounds(24, 134, 420, 28);
-        LaunchOption.Text = "Launch MarineOps after installation"; LaunchOption.Checked = launch;
-        LaunchOption.SetBounds(24, 170, 520, 28);
-        InstallButton.Text = "Install"; InstallButton.SetBounds(370, 224, 108, 36);
-        InstallButton.Click += delegate {
-            try { Installer.ValidateInstallTarget(InstallPath); DialogResult = DialogResult.OK; Close(); }
-            catch (Exception error) { MessageBox.Show(this, error.Message, "Choose installation folder", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        shortcut.Text = "Create desktop shortcut"; shortcut.Checked = makeShortcut; shortcut.SetBounds(256, 216, 440, 28);
+        launch.Text = "Open MarineOps when I finish setup"; launch.Checked = launchAfter; launch.SetBounds(256, 253, 440, 28);
+        status.ForeColor = muted; status.SetBounds(256, 150, 460, 120); status.Visible = false;
+        progress.SetBounds(256, 283, 460, 18); progress.AccessibleName = "Installation progress"; progress.Visible = false;
+        StyleButton(primary, true); StyleButton(secondary, false);
+        primary.Text = update ? "Update" : "Install"; primary.SetBounds(498, 370, 108, 38);
+        secondary.Text = "Cancel"; secondary.SetBounds(614, 370, 112, 38);
+        primary.Click += PrimaryClick; secondary.Click += delegate { if (!running) Close(); };
+        FormClosing += delegate(object sender, FormClosingEventArgs e) { if (running) e.Cancel = true; };
+        Controls.AddRange(new Control[] { heading, detail, folder, path, browse, shortcut, launch, status, progress, primary, secondary });
+        AcceptButton = primary; CancelButton = secondary; ActiveControl = primary;
+    }
+    private void StyleButton(Button button, bool emphasis)
+    {
+        button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderSize = emphasis ? 0 : 1;
+        button.FlatAppearance.BorderColor = Color.FromArgb(180, 195, 204);
+        button.BackColor = emphasis ? accent : paper; button.ForeColor = emphasis ? Color.White : ink; button.UseVisualStyleBackColor = false;
+    }
+    private void PrimaryClick(object sender, EventArgs e)
+    {
+        if (finished)
+        {
+            if (launch.Checked && !String.IsNullOrEmpty(installedExe))
+            {
+                try { Process.Start(new ProcessStartInfo(installedExe) { UseShellExecute = true }); }
+                catch (Exception ex) { detail.Text = "MarineOps is installed, but could not be opened."; status.Text = "Open it manually from:\n" + installedExe + "\n\n" + ex.Message; launch.Checked = false; primary.Text = "Finish"; return; }
+            }
+            Close(); return;
+        }
+        string target;
+        try { target = Path.GetFullPath(path.Text.Trim()); Installer.ValidateInstallTarget(target); }
+        catch (Exception ex) { detail.Text = ex.Message; detail.ForeColor = Color.FromArgb(164, 38, 44); return; }
+        bool createShortcut = shortcut.Checked;
+        running = true; Failed = false; heading.Text = "Installing MarineOps";
+        detail.Text = "Please keep this window open while setup completes."; detail.ForeColor = muted;
+        folder.Visible = path.Visible = browse.Visible = shortcut.Visible = launch.Visible = false;
+        status.Visible = progress.Visible = true; status.Text = "Preparing installation…"; progress.Style = ProgressBarStyle.Marquee;
+        primary.Enabled = secondary.Enabled = false;
+        BackgroundWorker worker = new BackgroundWorker(); worker.WorkerReportsProgress = true;
+        worker.DoWork += delegate(object o, DoWorkEventArgs args) {
+            string warning;
+            string exe = Installer.Install(target, desktopDir, shortcutName, createShortcut,
+                delegate(string stage, int value) { worker.ReportProgress(value < 0 ? 0 : value, new object[] { stage, value }); }, out warning);
+            args.Result = new string[] { exe, warning };
         };
-        Button cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(488, 224), Size = new Size(108, 36) };
-        Controls.AddRange(new Control[] { heading, label, PathInput, browse, ShortcutOption, LaunchOption, InstallButton, cancel });
-        AcceptButton = InstallButton; CancelButton = cancel;
+        worker.ProgressChanged += delegate(object o, ProgressChangedEventArgs args) {
+            object[] update = (object[])args.UserState; status.Text = (string)update[0] + "…";
+            int value = (int)update[1];
+            if (value < 0) progress.Style = ProgressBarStyle.Marquee;
+            else { if (progress.Style != ProgressBarStyle.Continuous) progress.Style = ProgressBarStyle.Continuous; progress.Value = Math.Min(90, Math.Max(0, value)); }
+        };
+        worker.RunWorkerCompleted += delegate(object o, RunWorkerCompletedEventArgs args) {
+            running = false;
+            if (args.Error != null) { ShowFailure(args.Error.Message); return; }
+            string[] result = (string[])args.Result; installedExe = result[0]; installWarning = result[1]; finished = true; heading.Text = "MarineOps is ready"; detail.Text = installWarning.Length == 0 ? "Installation completed successfully." : "Installation completed with a warning.";
+            status.Text = "Installed in:\n" + target + (installWarning.Length == 0 ? "" : "\n\n" + installWarning); progress.Visible = false;
+            primary.Text = launch.Checked ? "Open MarineOps" : "Finish"; primary.SetBounds(478, 370, 128, 38);
+            primary.Enabled = secondary.Enabled = true; secondary.Text = "Close";
+        };
+        worker.RunWorkerAsync();
+    }
+    private void ShowFailure(string message)
+    {
+        Failed = true; heading.Text = "Setup needs attention"; detail.Text = "Check the details below, then close setup and try again."; detail.ForeColor = muted;
+        status.Text = message; status.ForeColor = Color.FromArgb(164, 38, 44); progress.Visible = false; primary.Visible = false; secondary.Enabled = true; secondary.Text = "Close";
     }
 }

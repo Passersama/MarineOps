@@ -99,18 +99,15 @@ def route_options(snapshot, task, mode="Complete", start_stop_id=None, followup=
                     if s['vessel_id'] == task['from_id'] and order[s['id']] < order[p['id']]
                     and not any(order[s['id']] < order[q['id']] < order[p['id']] for q in ports)]
     if followup:
-        return [{"pick": "PORT", "drop": None}] if task["from_id"] == shore and task["status"] == "Waiting" else []
+        return [{"pick": s["id"], "drop": None} for s in ports] if task["from_id"] == shore and task["status"] == "Waiting" else []
     targets = [s["id"] for s in stops if s["vessel_id"] == task["to_id"]]
-    if mode != 'Final' and task["to_id"] == shore:
-        targets = ["PORT"]
     later_leg = mode == 'Final' and task.get('kind', 'Passengers') == 'Passengers' and task.get('previous_task_id')
-    if not later_leg and (task["status"] == "On Board" or task["from_id"] == shore or transfer_origin(task, snapshot)):
+    if not later_leg and (task["status"] == "On Board" or (task["from_id"] != shore and transfer_origin(task, snapshot))):
         return [{"pick": None, "drop": target} for target in targets]
     sources = [s["id"] for s in stops if s["vessel_id"] == task["from_id"]]
     if mode == "Final" and task.get("kind") == "Materials" and task["status"] == "Waiting" and not targets:
-        # A vessel call can collect materials even when delivery is on a later route.
         return [{"pick": source, "drop": None} for source in sources]
-    order = {s["id"]: i for i, s in enumerate(stops)} | {"PORT": len(stops)}
+    order = {s["id"]: i for i, s in enumerate(stops)}
     return [{"pick": source, "drop": target} for source in sources for target in targets if order[source] < order[target]]
 
 
@@ -152,7 +149,7 @@ def generate_plan(snapshot, personnel, selected_cargo, plan_date, port_name, mod
     if not snapshot["voyage_id"]:
         issues.append({"task": "", "message": "No Voyage selected in MarineOps"})
     if not all_stops and not snapshot.get('transport_contract'):
-        issues.append({"task": "", "message": "Voyage has no vessel stops"})
+        issues.append({"task": "", "message": "Voyage has no stops"})
     if snapshot.get("archived"):
         issues.append({"task": "", "message": "An archived Voyage cannot be used for new work"})
     route = all_stops
@@ -170,9 +167,6 @@ def generate_plan(snapshot, personnel, selected_cargo, plan_date, port_name, mod
     stops = [{"id": s["id"], "number": numbers[s["id"]], "name": s["vessel_name_snapshot"],
               "vessel_id": s["vessel_id"], **{g: [] for g, _, _ in GROUPS}} for s in route]
     shore = next((r["id"] for r in snapshot["locations"] if r["kind"] == "SHORE"), None)
-    if mode != 'Final':
-        stops.append({"id": "PORT", "number": len(all_stops) + 1, "name": port_name.strip(), "vessel_id": shore,
-                      **{g: [] for g, _, _ in GROUPS}})
     by_id = {s["id"]: s for s in stops}
     tasks = [{**copy.deepcopy(r), "kind": "Passengers"} for r in personnel] + cargo_tasks(snapshot, selected_cargo)
     tasks.sort(key=leg_order)
@@ -221,8 +215,6 @@ def generate_plan(snapshot, personnel, selected_cargo, plan_date, port_name, mod
             if name_key in names and not confirmed_conflicts and mode != "Final":
                 problems.append("Repeated passenger name; confirm distinct people or resolve conflicting tasks")
             names[name_key] = identifier
-        if mode == "Remaining" and task.get("from_id") == shore and task["status"] == "Waiting" and identifier not in followups:
-            problems.append("Port-origin passenger / cargo is still Waiting; verify actual pickup before Remaining plan")
         if problems:
             issues.extend({"task": identifier, "message": p} for p in dict.fromkeys(problems))
             continue
@@ -281,7 +273,7 @@ def generate_plan(snapshot, personnel, selected_cargo, plan_date, port_name, mod
     personnel_dependencies=dependency_spec(snapshot,personnel,[])
     personnel_dependencies['mode']=mode
     result = {"date": iso_date(plan_date), "mode": mode, "start_stop_id": start_stop_id, "shore_id": shore,
-            'output_contract_version':1,
+            'output_contract_version':2,
             "personnel_plan_id": personnel_plan_id, "voyage_id": snapshot["voyage_id"], "voyage_name": snapshot["voyage_name"],
             "port_name": port_name.strip(), "transfer_vessel": transfer_name(snapshot),
             "source_path": snapshot["source_path"], "source_hash": snapshot["source_hash"], "source_revision": snapshot["revision"],
@@ -311,6 +303,8 @@ def revise_complete(base, pending, snapshot, live_personnel):
         raise PersonnelError("Choose a saved Complete version.")
     if base["source_path"] != snapshot["source_path"] or base["voyage_id"] != snapshot["voyage_id"]:
         raise PersonnelError("The saved version belongs to another Cargo ledger or Voyage.")
+    if any(s["id"] == "PORT" for s in base["stops"]):
+        raise PersonnelError("This historical plan used an automatic port and cannot be revised. Keep the saved version as history. In Dashboard > Voyages, add the actual port visits in order; then in Personnel create a Remaining plan and choose its starting stop.")
     if [s["id"] for s in base["stops"] if s["id"] != "PORT"] != [s["id"] for s in snapshot["stops"]]:
         raise PersonnelError("Voyage stop order changed. Keep the original Complete version and generate a Remaining plan for the new route.")
     if pending["mode"] != "Remaining" or pending["date"] != base["date"]:
@@ -336,8 +330,6 @@ def revise_complete(base, pending, snapshot, live_personnel):
     for stop in pending["stops"]:
         for group, _, _ in GROUPS:
             by_id[stop["id"]][group].extend(copy.deepcopy(stop[group]))
-    # Historical item labels stay frozen; the new terminal heading uses reviewed settings.
-    by_id["PORT"]["name"] = pending["port_name"]
     for field in ("source_hash", "source_revision", "personnel_hash", "issues", "warnings", "assignments", "followups", "excluded", "port_name", "transfer_vessel", "source_dependencies", "dependency_hash", "personnel_dependencies", "personnel_dependency_hash", "source_identity", "source_generation"):
         result[field] = copy.deepcopy(pending[field])
     result["included"] = sorted(retained | set(pending["included"]))

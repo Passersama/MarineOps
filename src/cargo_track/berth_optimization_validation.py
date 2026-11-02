@@ -47,7 +47,7 @@ def validate_route(problem, stops, assignments):
 
 def validate_contract(problem):
     """Drafts may have route issues, but their persisted contract must remain readable."""
-    if (not isinstance(problem, dict) or problem.get('version') not in {1, 2} or
+    if (not isinstance(problem, dict) or problem.get('version') not in {1, 2, 3} or
         not isinstance(problem.get('tasks'), list) or not isinstance(problem.get('pins'), list) or
         not isinstance(problem.get('locked'), dict) or not isinstance(problem.get('errors'), list) or
         not all(isinstance(e,str) for e in problem['errors'])):

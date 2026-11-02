@@ -132,6 +132,11 @@ class WorkbookResourceTests(unittest.TestCase):
         with patch.object(imports,'load_workbook',side_effect=AssertionError('Unsafe input reached parser')):
             for operation in operations:
                 with self.assertRaises(imports.PersonnelError):operation()
+    def test_openxml_binary_printer_settings_are_not_misclassified_as_xml(self):
+        self.rewrite([('xl/printerSettings/printerSettings1.bin', b'\x00\xffprinter')],
+                     '<Override PartName="/xl/printerSettings/printerSettings1.bin" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.printerSettings"/>')
+        self.assertTrue(imports.workbook_sheets(self.path))
+
     def test_original_shared_string_attack_is_bounded_by_object_limit(self):
         xml=('<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+'<si><t>A</t></si>'*(safety.MAX_SHARED_STRINGS+1)+'</sst>').encode()
         self.rewrite([('xl/strings.data',xml)],'<Override PartName="/xl/strings.data" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>')

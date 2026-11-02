@@ -45,6 +45,26 @@ def oracle(tasks, max_calls=6):
 
 
 class OptimizerTests(unittest.TestCase):
+    def test_configured_transfer_vessel_is_not_a_call(self):
+        source = snapshot()
+        source['locations'][1]['name'] = 'Stanford Niger'
+        source['plan_transfer_vessel'] = ' stanford  niger '
+        row = passenger(1, 1, 2)
+        row['from_name'] = 'Stanford Niger'
+        problem = make_problem(source, [row], [])
+        result = solve(problem)
+        self.assertEqual(result['status'], 'OPTIMAL')
+        self.assertEqual([v['location_id'] for v in result['visits']], [2])
+        self.assertIsNone(result['assignments']['Passengers:1']['pick'])
+        retained = make_problem(source, [row], [], pins=[{'id': 'boat', 'vessel_id': 1}])
+        self.assertEqual(solve(retained)['status'], 'INPUT_INVALID')
+
+    def test_transfer_vessel_destination_requires_review(self):
+        source = snapshot()
+        source['locations'][1]['name'] = 'Boat'
+        problem = make_problem(source, [passenger(1, 2, 1)], [])
+        self.assertEqual(solve(problem)['status'], 'INPUT_INVALID')
+
     def solution(self,rows,**kwargs):
         problem=make_problem(snapshot(),rows,[],**kwargs);result=solve(problem)
         self.assertEqual(result['status'],'OPTIMAL',result)

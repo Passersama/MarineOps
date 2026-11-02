@@ -44,7 +44,7 @@ def main():
             log.write(f'Process-isolated unittest modules; jobs={args.jobs}\n')
             for name,code,value in results:
                 log.write('\nModule: '+name+'\n'+value+'\n')
-                match=re.search(r'Ran (\d+) tests',value)
+                match=re.search(r'Ran (\d+) tests?',value)
                 skip=re.search(r'OK \(skipped=(\d+)\)',value)
                 if match:count+=int(match[1])
                 if skip:skipped+=int(skip[1])

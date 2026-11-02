@@ -7,7 +7,7 @@ def transfer_name(snapshot):
 
 
 def transfer_origin(task, snapshot):
-    if task.get('kind', 'Passengers') != 'Passengers':
+    if task.get('kind', 'Passengers') != 'Passengers' or task.get('direction') in ('Sign-on', 'Sign-off'):
         return False
     name = transfer_name(snapshot)
     if not name:

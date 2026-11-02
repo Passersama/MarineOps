@@ -355,7 +355,7 @@ class CargoTrackWindow(QMainWindow):
 
     def _build(self):
         central=QWidget();self.setCentralWidget(central)
-        root=QVBoxLayout(central);root.setContentsMargins(20,12,20,12);root.setSpacing(12)
+        root=QVBoxLayout(central);root.setContentsMargins(20,12,20,0);root.setSpacing(12)
         nav=QHBoxLayout();self.navigation=WorkspaceNavigation('cargo');self.brand=self.navigation.brand
         nav.addWidget(self.navigation);nav.addStretch(1)
         self.fleet_button=QPushButton('Fleet');self.voyage_button=QPushButton('Voyages')
@@ -395,9 +395,9 @@ class CargoTrackWindow(QMainWindow):
         self.route_hint=QLabel('');self.route_hint.setWordWrap(True);route_root.addWidget(self.route_hint)
         movement=QHBoxLayout();self.previous_button=QPushButton('Previous');self.next_button=QPushButton('Next')
         movement.addWidget(self.previous_button);movement.addWidget(self.next_button);route_header.addLayout(movement)
-        route_actions=QHBoxLayout();self.route_add_button=QPushButton('+ Add vessel')
+        route_actions=QHBoxLayout();self.route_add_button=QPushButton('+ Add stop')
         self.route_actions=QToolButton();self.route_actions.setText('Route actions');self.route_actions.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        route_menu=QMenu(self.route_actions);route_menu.addAction('New voyage',self.new_voyage);route_menu.addAction('Copy previous',self.copy_voyage)
+        route_menu=QMenu(self.route_actions);route_menu.addAction('New voyage',lambda:self.new_voyage());route_menu.addAction('Copy previous',self.copy_voyage)
         self.route_actions.setMenu(route_menu);route_header.addWidget(self.route_add_button);route_header.addWidget(self.route_actions);route_root.insertLayout(0,route_header)
         self.previous_button.clicked.connect(lambda:self.move_current_stop(-1));self.next_button.clicked.connect(lambda:self.move_current_stop(1));self.route_add_button.clicked.connect(self.add_vessel_stop)
         body.addWidget(self.route_panel)
@@ -451,13 +451,15 @@ class CargoTrackWindow(QMainWindow):
         header=self.table.horizontalHeader();header.setSectionsClickable(True);header.setStretchLastSection(True);header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
         ledger.addWidget(self.table,1);self.table.doubleClicked.connect(self.open_selected_detail);self.table.selectionModel().currentChanged.connect(self._selection_changed);self.table.selectionModel().selectionChanged.connect(self._selection_rows_changed);header.sectionClicked.connect(self._sort_clicked)
         self._completed_visible=False;self.table.setColumnHidden(7,True)
-        footer=QHBoxLayout();footer.addStretch();self.result_label=QLabel('');footer.addWidget(self.result_label)
+        self.result_label=QLabel('',self);self.result_label.hide()
+        self.pagination=QWidget();footer=QHBoxLayout(self.pagination);footer.setContentsMargins(0,0,0,0);footer.addStretch()
         self.previous_page=QPushButton('Previous page');self.page_label=QLabel('');self.next_page=QPushButton('Next page')
-        for widget in (self.previous_page,self.page_label,self.next_page):widget.hide();footer.addWidget(widget)
-        self.previous_page.clicked.connect(lambda:self.change_page(-1));self.next_page.clicked.connect(lambda:self.change_page(1));ledger.addLayout(footer)
+        for widget in (self.previous_page,self.page_label,self.next_page):footer.addWidget(widget)
+        self.previous_page.clicked.connect(lambda:self.change_page(-1));self.next_page.clicked.connect(lambda:self.change_page(1));self.pagination.hide();ledger.addWidget(self.pagination)
         self.status_text=QLabel('',self);self.status_text.hide()
         self._update_selected_actions()
-        self.statusBar().hide();self.statusBar().messageChanged.connect(lambda text:self.statusBar().setVisible(bool(text)))
+        # Keep the shared status area allocated so messages do not resize every workspace.
+        self.statusBar().setSizeGripEnabled(False);self.statusBar().show()
 
     def _apply_saved_layout(self):
         size=self.settings.value("window/size")
@@ -656,7 +658,7 @@ class CargoTrackWindow(QMainWindow):
         self.route_scroll.setVisible(bool(stops))
         self.route_items.invalidate();self.route_content.updateGeometry()
         no_voyage=self.snapshot["current_voyage_id"] is None
-        self.route_hint.setText("Create a voyage to add stops" if no_voyage else "No vessels in this voyage" if not stops else "Open a stop menu to move or remove")
+        self.route_hint.setText("Create a voyage to add stops" if no_voyage else "No stops in this voyage" if not stops else "Open a stop menu to move or remove")
         self.route_add_button.setEnabled(not no_voyage)
 
     def _render_current_stop(self):
@@ -750,7 +752,7 @@ class CargoTrackWindow(QMainWindow):
         self.result_label.setText(f"{start}–{end} of {data['total']} transfers" if data["total"]>PAGE_SIZE else f"{data['total']} transfers")
         pages=max(1,(data["total"]+PAGE_SIZE-1)//PAGE_SIZE);self.page_label.setText(f"Page {self.page+1} of {pages}")
         self.previous_page.setEnabled(self.page>0);self.next_page.setEnabled((self.page+1)*PAGE_SIZE<data["total"])
-        for widget in (self.previous_page,self.page_label,self.next_page):widget.setVisible(pages>1)
+        self.pagination.setVisible(pages>1)
         self.selected_no=preserve
         if self.selected_no:
             for index,row in enumerate(self.model.rows):
@@ -835,7 +837,7 @@ class CargoTrackWindow(QMainWindow):
 
     def remove_stop(self,stop_id):
         stop=next((item for item in self.snapshot["stops"] if item["id"]==stop_id),None)
-        if stop and confirm(self,"Remove this stop?",f"Remove {stop['vessel_name_snapshot']} from this voyage?","The Fleet vessel and cargo records will stay unchanged."):
+        if stop and confirm(self,"Remove this stop?",f"Remove {stop['vessel_name_snapshot']} from this voyage?","The location and cargo records will stay unchanged."):
             self._submit("remove_stop",{"stop_id":stop_id},"Stop removed from this voyage.")
 
     def _choose_stop_id(self,identifier):self._submit("choose_stop",{"stop_id":identifier},"Current stop saved.")
@@ -862,20 +864,24 @@ class CargoTrackWindow(QMainWindow):
         self._submit("choose_stop",{"stop_id":stops[target]["id"]},"Current stop saved.")
 
     def add_vessel_stop(self):
-        if not self.snapshot or not self.snapshot["vessels"]:
-            info_box(self,"Fleet is empty","Add a vessel to Fleet first. The voyage can remain empty while you manage transfers.");return
-        names=[row["name"] for row in self.snapshot["vessels"] if row["active"]]
-        if not names:info_box(self,"No active vessels","Reactivate or add a vessel in Fleet first.");return
-        name,ok=QInputDialog.getItem(self,"Add vessel to voyage","Choose a Fleet vessel",names,0,False)
+        if not self.snapshot:
+            return
+        locations = [row for row in self.snapshot["locations"] if row["active"] and row["kind"] in ("VESSEL", "SHORE")]
+        if not locations:
+            info_box(self, "No available locations", "Add a vessel to Fleet or configure the port first."); return
+        labels = [row["name"] + (" (Port)" if row["kind"] == "SHORE" else " (Vessel)") for row in locations]
+        name, ok = QInputDialog.getItem(self, "Add stop to voyage", "Choose a vessel or port", labels, 0, False)
         if ok:
-            vessel=next(row for row in self.snapshot["vessels"] if row["name"]==name)
-            self._submit("add_stop",{"vessel_id":vessel["id"]},f"Added {name} as a new stop.")
+            location = locations[labels.index(name)]
+            self._submit("add_stop", {"vessel_id": location["id"]}, f"Added {location['name']} as a new stop.")
 
-    def new_voyage(self):
-        name,ok=QInputDialog.getText(self,"New voyage","Voyage name")
-        if ok and name.strip():
-            if confirm(self,"Create an empty voyage?",f"Start {name.strip()} with no stops?","You can add or copy stops later. No current stop will be selected automatically."):
-                self._submit("create_voyage",{"name":name.strip()},"New empty voyage created.")
+    def new_voyage(self, on_success=None):
+        if not self.snapshot or self._busy:return
+        snapshot=self.snapshot
+        dialog=NewVoyageDialog(self, snapshot["locations"])
+        if dialog.exec()==QDialog.DialogCode.Accepted:
+            payload=dialog.payload();payload.update(expected_epoch=snapshot["dataset_epoch"],expected_revision=snapshot["revision"])
+            self._submit("create_voyage", payload, "New voyage created.", on_success=on_success)
 
     def copy_voyage(self):
         name,ok=QInputDialog.getText(self,"Copy voyage","Name for the copied route",text="New voyage")
@@ -1081,20 +1087,61 @@ class CargoTrackWindow(QMainWindow):
         self.client.close();super().closeEvent(event)
 
 
+class NewVoyageDialog(AppDialog):
+    def __init__(self, host, locations):
+        super().__init__(host);self.setWindowTitle("New voyage");self.resize(480,480)
+        root=QVBoxLayout(self)
+        form=QFormLayout();self.name=QLineEdit();self.name.setMaxLength(120);self.name.setAccessibleName("Voyage name");form.addRow("Voyage name",self.name);root.addLayout(form)
+        note=QLabel("Add vessel or port visits in order. Drag visits to reorder them; add a location again for a return visit. Creating this voyage makes the previous active voyage read-only.");note.setWordWrap(True);root.addWidget(note)
+        self.route=QListWidget();self.route.setAccessibleName("New voyage visit order");self.route.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove);root.addWidget(self.route,1)
+        controls=QHBoxLayout();self.locations=QComboBox();self.locations.setAccessibleName("Vessel or port to add")
+        for location in locations:
+            if location["active"] and location["kind"] in ("VESSEL","SHORE"):
+                self.locations.addItem(location["name"]+(" (Port)" if location["kind"]=="SHORE" else " (Vessel)"),location["id"])
+        controls.addWidget(self.locations,1);add=QPushButton("Add stop");add.setEnabled(self.locations.count()>0);add.clicked.connect(self.add_stop);controls.addWidget(add)
+        remove=QPushButton("Remove");remove.clicked.connect(self.remove_stop);controls.addWidget(remove);root.addLayout(controls)
+        movement=QHBoxLayout()
+        for title,delta in (("Move up",-1),("Move down",1)):
+            button=QPushButton(title);button.clicked.connect(lambda checked=False,d=delta:self.move_stop(d));movement.addWidget(button)
+        movement.addStretch();root.addLayout(movement)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Create voyage");buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);root.addWidget(buttons)
+
+    def add_stop(self):
+        if self.locations.currentIndex()<0:return
+        item=QListWidgetItem(self.locations.currentText());item.setData(Qt.ItemDataRole.UserRole,self.locations.currentData());self.route.addItem(item);self.route.setCurrentItem(item)
+
+    def remove_stop(self):
+        row=self.route.currentRow()
+        if row>=0:self.route.takeItem(row)
+
+    def move_stop(self,delta):
+        row=self.route.currentRow();target=row+delta
+        if row>=0 and 0<=target<self.route.count():
+            item=self.route.takeItem(row);self.route.insertItem(target,item);self.route.setCurrentRow(target)
+
+    def accept(self):
+        if not self.name.text().strip():
+            info_box(self,"Voyage name required","Enter a name for the voyage.");self.name.setFocus();return
+        super().accept()
+
+    def payload(self):
+        return {"name":self.name.text().strip(),"location_ids":[self.route.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.route.count())]}
+
+
 class VoyagesDialog(AppDialog):
     def __init__(self,host):
         super().__init__(host);self.host=host;self.rows=[];self.setWindowTitle("Voyages");self.resize(620,500)
         root=QVBoxLayout(self);self.list=QListWidget();self.list.setAccessibleName("Voyage history");root.addWidget(self.list)
         self.details=QLabel("Voyage stops are read-only after a new voyage replaces the active route.");self.details.setWordWrap(True);root.addWidget(self.details)
-        actions=QHBoxLayout();self.new_button=QPushButton("New empty voyage");self.copy_button=QPushButton("Copy selected route");self.close_button=QPushButton("Close");self.delete_button=QPushButton("Delete…");self.delete_button.clicked.connect(self.delete_selected)
-        for button in (self.new_button,self.copy_button,self.delete_button,self.close_button):actions.addWidget(button)
+        actions=QHBoxLayout();self.new_button=QPushButton("New voyage");self.copy_button=QPushButton("Copy selected route");self.close_button=QPushButton("Close");self.delete_button=QPushButton("Delete…");self.delete_button.clicked.connect(self.delete_selected);self.complete_button=QPushButton("Complete voyage…");self.complete_button.clicked.connect(self.complete_selected)
+        for button in (self.new_button,self.copy_button,self.complete_button,self.delete_button,self.close_button):actions.addWidget(button)
         help_button=QPushButton("Help");help_button.clicked.connect(lambda:self.host.open_help("voyages"));actions.addWidget(help_button)
         root.addLayout(actions);self.list.currentRowChanged.connect(self.show_selected);self.new_button.clicked.connect(self.new);self.copy_button.clicked.connect(self.copy_selected);self.close_button.clicked.connect(self.accept)
 
     def set_rows(self,rows):
         self.rows=rows;self.list.clear()
         for row in rows:
-            state="Current · editable" if row["is_current"] else "History · read-only" if row["archived"] else "Available"
+            state="Current · editable" if row["is_current"] else "Completed · read-only" if row.get("completed") else "History · read-only" if row["archived"] else "Available"
             item=QListWidgetItem(f"{row['name']}     {state}");item.setData(Qt.ItemDataRole.UserRole,row);self.list.addItem(item)
         self.list.setCurrentRow(0 if rows else -1);self.show_selected()
 
@@ -1102,12 +1149,19 @@ class VoyagesDialog(AppDialog):
         item=self.list.currentItem();row=item.data(Qt.ItemDataRole.UserRole) if item else None
         stops=[stop["vessel_name_snapshot"] for stop in row["stops"] if not stop["removed"]] if row else []
         self.details.setText(("Route: "+"  →  ".join(stops) if stops else "This voyage has no active stops.")+"\nA historical voyage is read-only. Copy its route to create a new working voyage.")
-        self.copy_button.setEnabled(bool(row));self.delete_button.setEnabled(bool(row));self._selected=row
+        self.copy_button.setEnabled(bool(row));self.delete_button.setEnabled(bool(row));self.complete_button.setEnabled(bool(row and row["is_current"]));self._selected=row
 
     def new(self):
-        name,ok=QInputDialog.getText(self,"New voyage","Voyage name")
-        if ok and name.strip() and confirm(self,"Create a new voyage?",f"Create {name.strip()} with no stops?","The active route will become read-only. You can add stops later."):
-            self.host._submit("create_voyage",{"name":name.strip()},"New voyage created.",on_success=lambda *_:self.host._refresh_then())
+        self.host.new_voyage(on_success=lambda:self.host._send("_voyage_history",meta={"kind":"voyage_history","dialog":self}))
+
+    def complete_selected(self):
+        row=self._selected
+        if not row or not row["is_current"]:return
+        count=self.host.snapshot["counts"]["open"]
+        detail=(f"There are {count} unfinished cargo transfer(s) across the ledger. They remain open for follow-up. "
+                "The route becomes read-only and the current stop is cleared. Crew lists and plans are retained.")
+        if confirm(self,"Complete voyage?",f"Complete {row['name']}?",detail):
+            self.host._submit("complete_voyage",{"voyage_id":row["id"]},"Voyage completed.",on_success=lambda:self.host._send("_voyage_history",meta={"kind":"voyage_history","dialog":self}))
 
     def delete_selected(self):
         row=self._selected
